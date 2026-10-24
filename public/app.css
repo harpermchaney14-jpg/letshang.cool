@@ -740,3 +740,29 @@ html[data-theme="pastel"] .style-opt.on { border-color: var(--p-lav-d); box-shad
 .sc-note { margin-bottom: 10px; }
 .motivation-banner.school-off { cursor: default; }
 .cal-day.sc[aria-pressed="true"] { background: linear-gradient(135deg, var(--purple), var(--pink)) !important; color: #fff !important; }
+
+/* ===== alert pop-up (new notification) ===== */
+.alert-pop {
+  position: fixed; z-index: 90; left: 10px; right: 10px; top: calc(10px + env(safe-area-inset-top, 0px));
+  display: flex; align-items: center; gap: 12px; padding: 16px 18px; text-align: left; cursor: pointer;
+  border: 3px solid var(--yellow); border-radius: 22px; background: #14002e; color: #fff; font: inherit;
+  box-shadow: 6px 7px 0 #000; transform: translateY(-160%); transition: transform .35s cubic-bezier(.2, 1.4, .4, 1);
+  max-width: 560px; margin: 0 auto;
+}
+.alert-pop.show { transform: translateY(0); animation: pop-shake .5s .35s 2; }
+.alert-pop .ap-em { font-size: 38px; line-height: 1; flex-shrink: 0; }
+.alert-pop .ap-txt { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.alert-pop b { font-family: 'Bangers', sans-serif; font-weight: 400; font-size: 24px; letter-spacing: .5px; line-height: 1.05; color: var(--yellow); }
+.alert-pop small { font-size: 14px; font-weight: 700; color: #e9dcff; }
+.alert-pop .ap-x { align-self: flex-start; font-size: 16px; opacity: .7; padding: 2px 4px; }
+.alert-pop.t-pickup, .alert-pop.t-ride, .alert-pop.t-safety { border-color: var(--pink); }
+.alert-pop.t-pickup b, .alert-pop.t-ride b, .alert-pop.t-safety b { color: var(--pink); }
+.alert-pop.t-ready, .alert-pop.t-checkin { border-color: var(--green); }
+.alert-pop.t-ready b, .alert-pop.t-checkin b { color: var(--green); }
+.alert-pop.t-message, .alert-pop.t-parent_message { border-color: var(--cyan); }
+.alert-pop.t-message b, .alert-pop.t-parent_message b { color: var(--cyan); }
+@keyframes pop-shake { 25% { rotate: -2deg; } 75% { rotate: 2deg; } }
+/* one quick screen-edge flash */
+body.alert-flash::after { content: ''; position: fixed; inset: 0; z-index: 89; pointer-events: none; box-shadow: inset 0 0 0 6px var(--yellow); animation: edge-flash .9s ease-out 2 forwards; }
+@keyframes edge-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .alert-pop.show { animation: none; } body.alert-flash::after { animation: none; opacity: 0; } }

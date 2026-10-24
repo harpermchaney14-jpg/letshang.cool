@@ -313,8 +313,9 @@ async function badgeCounts(env, user) {
   }
   const fm = await first(env, 'SELECT COUNT(*) AS n FROM family_messages WHERE to_id = ? AND read_at IS NULL', user.id);
   // Newest notification — the app plays a sound when this id goes up.
-  const latest = await first(env, 'SELECT id, type FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', user.id);
-  return { notifications: n.n, messages, approvals, rides, family_messages: fm.n, latest_id: latest?.id || 0, latest_type: latest?.type || null };
+  const latest = await first(env, 'SELECT id, type, title, body, link FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', user.id);
+  return { notifications: n.n, messages, approvals, rides, family_messages: fm.n, latest_id: latest?.id || 0, latest_type: latest?.type || null,
+    latest_title: latest?.title || null, latest_body: latest?.body || null, latest_link: latest?.link || null };
 }
 
 add('GET', '/api/me', async ({ env, user }) => {

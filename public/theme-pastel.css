@@ -236,3 +236,11 @@ html[data-theme="pastel"] .cal-key .k-mark { box-shadow: inset 0 0 0 2px var(--p
 html[data-theme="pastel"] .cal-key .k-plan { background: var(--p-lav-d); }
 html[data-theme="pastel"] .school-list .sc-no_school b { color: #b8326f; }
 html[data-theme="pastel"] .cal-day.sc[aria-pressed="true"] { background: var(--p-lav-d) !important; color: #fff !important; }
+
+/* --- alert pop-up --- */
+html[data-theme="pastel"] .alert-pop { background: linear-gradient(120deg, #fff, #f6efff); color: var(--p-ink); border: 2px solid #fff; box-shadow: 0 18px 40px -16px rgba(120, 70, 190, .55), 0 0 0 4px var(--p-lav); }
+html[data-theme="pastel"] .alert-pop b { font-family: var(--serif); font-style: italic; font-size: 22px; color: var(--p-ink) !important; }
+html[data-theme="pastel"] .alert-pop small { color: var(--p-ink-2); }
+html[data-theme="pastel"] .alert-pop.t-pickup, html[data-theme="pastel"] .alert-pop.t-ride, html[data-theme="pastel"] .alert-pop.t-safety { box-shadow: 0 18px 40px -16px rgba(200, 60, 120, .5), 0 0 0 4px var(--p-pink); }
+html[data-theme="pastel"] .alert-pop.t-ready, html[data-theme="pastel"] .alert-pop.t-checkin { box-shadow: 0 18px 40px -16px rgba(90, 120, 80, .5), 0 0 0 4px var(--p-mint); }
+html[data-theme="pastel"] body.alert-flash::after { box-shadow: inset 0 0 0 6px var(--p-pink-d); }

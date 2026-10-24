@@ -125,8 +125,17 @@
   const Sound = (() => {
     let ctx = null;
     const on = () => store.get('lh_sound', true) !== false;
+    let bus = null;
     function engine() {
-      if (!ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; ctx = new AC(); }
+      if (!ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; ctx = new AC();
+        // Loud: boost everything, then a limiter so it doesn't crackle on phone speakers.
+        const boost = ctx.createGain(); boost.gain.value = 2.6;
+        const lim = ctx.createDynamicsCompressor();
+        lim.threshold.value = -10; lim.knee.value = 4; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.15;
+        const out = ctx.createGain(); out.gain.value = 1.25;
+        boost.connect(lim).connect(out).connect(ctx.destination); bus = boost;
+      }
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       return ctx;
     }
@@ -144,19 +153,19 @@
       g.gain.setValueAtTime(0.0001, t);
       g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
       g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-      o.connect(g).connect(c.destination); o.start(t); o.stop(t + len + 0.05);
+      o.connect(g).connect(bus || c.destination); o.start(t); o.stop(t + len + 0.05);
     }
-    function tune(notes) {
+    function tune(notes, times = 1) {
       const c = engine(); if (!c) return;
-      const t0 = c.currentTime + 0.02;
-      for (const [f, at, len, voice = 'sine', vol = 0.25, toF] of notes) {
-        const t = t0 + at;
+      const dur = Math.max(...notes.map((n) => n[1] + n[2]));
+      for (let r = 0; r < times; r++) for (const [f, at, len, voice = 'sine', vol = 0.25, toF] of notes) {
+        const t = c.currentTime + 0.02 + r * (dur + 0.35) + at;
         if (voice === 'pluck') { osc(c, 'triangle', f, t, len, vol); osc(c, 'sine', f * 2, t, len * 0.6, vol * 0.35); }
         else if (voice === 'bell') { osc(c, 'sine', f, t, len, vol); osc(c, 'sine', f * 2.76, t, len * 0.5, vol * 0.18); osc(c, 'sine', f * 5.4, t, len * 0.25, vol * 0.06); }
         else osc(c, voice, f, t, len, vol, toF);
       }
     }
-    const sparkle = (at) => [[2637, at, 0.25, 'bell', 0.05], [3136, at + 0.06, 0.3, 'bell', 0.04], [3951, at + 0.12, 0.35, 'bell', 0.03]];
+    const sparkle = (at) => [[2637, at, 0.25, 'bell', 0.08], [3136, at + 0.06, 0.3, 'bell', 0.07], [3951, at + 0.12, 0.35, 'bell', 0.05]];
     const SQ = 'square', V = 0.2; // 8-bit squares are loud — keep them low
     const TUNES = {
       // NEON — 8-bit arcade
@@ -180,11 +189,18 @@
         chime:   [[1319, 0, 0.6, 'bell', 0.15], [1976, 0.1, 0.7, 'bell', 0.1], ...sparkle(0.15)],
       },
     };
+    // Important alerts play more than once so they're hard to miss.
+    const REPEAT = { pickup: 3, ready: 2, safety: 3, approve: 2, checkin: 1, message: 2, chime: 1 };
     const KIND = { message: 'message', parent_message: 'message', ready: 'ready', pickup: 'pickup', checkin: 'checkin', ride: 'pickup', ride_update: 'approve',
       friend_request: 'approve', friend_approval: 'approve', friend_accepted: 'approve', plan_approval: 'approve', plan_update: 'approve', safety: 'safety' };
     return {
       on, kindFor: (type) => KIND[type] || 'chime',
-      play(kind, force) { if (!force && !on()) return; const set = TUNES[theme()] || TUNES.neon; try { tune(set[kind] || set.chime); } catch { /* audio blocked */ } },
+      play(kind, force) {
+        if (!force && !on()) return;
+        const set = TUNES[theme()] || TUNES.neon;
+        try { tune(set[kind] || set.chime, REPEAT[kind] || 1); } catch { /* audio blocked */ }
+        try { navigator.vibrate?.(kind === 'message' ? 120 : [220, 120, 220, 120, 220]); } catch { /* not supported (iPhone) */ }
+      },
       set(v) { store.set('lh_sound', !!v); },
     };
   })();
@@ -194,16 +210,38 @@
     if (!b) return;
     const now = { id: b.latest_id || 0, msgs: (b.messages || 0) + (b.family_messages || 0) };
     if (heard && S.me) {
-      if (now.id > heard.id) Sound.play(Sound.kindFor(b.latest_type));
-      else if (now.msgs > heard.msgs) Sound.play('message');
+      if (now.id > heard.id) { Sound.play(Sound.kindFor(b.latest_type)); alertPop(b.latest_type, b.latest_title, b.latest_body, b.latest_link); }
+      else if (now.msgs > heard.msgs && S.view?.name !== 'conv' && S.view?.name !== 'family') { Sound.play('message'); alertPop('message', 'New message 💬', 'Tap to read', isKid() ? 'tab:chat' : null); }
     }
     heard = now;
+  }
+  // Big drop-down card for new alerts — impossible to miss, even with the ringer off.
+  const POP_EM = { message: '💬', parent_message: '💌', ready: '🙋', pickup: '🚗', ride: '🌧️', ride_update: '🚗', checkin: '📍', safety: '🛡️',
+    friend_request: '🫶', friend_accepted: '🤝', friend_approval: '✅', plan_approval: '📅', plan_update: '📅' };
+  let popTimer = null;
+  function alertPop(type, title, body, link) {
+    if (!title) return;
+    let el = $('#alert-pop');
+    if (!el) { el = document.createElement('button'); el.id = 'alert-pop'; el.type = 'button'; document.body.appendChild(el); }
+    el.className = `alert-pop t-${type || 'chime'}`;
+    el.dataset.link = link || '';
+    el.innerHTML = `<span class="ap-em" aria-hidden="true">${POP_EM[type] || '🔔'}</span><span class="ap-txt"><b>${esc(title)}</b>${body ? `<small>${esc(body)}</small>` : ''}</span><span class="ap-x" aria-hidden="true">✕</span>`;
+    el.setAttribute('role', 'alert');
+    void el.offsetWidth; el.classList.add('show');
+    document.body.classList.remove('alert-flash'); void document.body.offsetWidth; document.body.classList.add('alert-flash');
+    clearTimeout(popTimer); popTimer = setTimeout(() => el.classList.remove('show'), 9000);
+    el.onclick = (e) => {
+      el.classList.remove('show');
+      if (e.target.closest('.ap-x')) return;
+      const l = el.dataset.link;
+      if (l === 'tab:chat') go('chat'); else if (l && !follow(l)) go(isKid() ? 'home' : 'alerts'); else if (!l) go(isKid() ? 'home' : 'alerts');
+    };
   }
   function soundPanel() {
     return `<div class="panel stack"><h3>🔊 Sounds</h3>
       <label class="switch-row"><span>Play a sound for new notifications</span><input type="checkbox" role="switch" data-act="sound-toggle" ${Sound.on() ? 'checked' : ''}></label>
       <div class="row wrap">${[['message', '💬'], ['pickup', '🚗'], ['ready', '🙋'], ['approve', '✅']].map(([k, e]) => `<button type="button" class="ghost-button sm" data-act="sound-test" data-k="${k}">${e} Test</button>`).join('')}</div>
-      <p class="small muted">${theme() === 'pastel' ? 'Pastel = sparkly pop sounds ✨' : 'Neon = arcade sounds 🕹️'} — they switch with your style. Sounds play while Let's Hang is open. Turn your ringer on (the side switch) and turn the volume up.</p></div>`;
+      <p class="small muted">${theme() === 'pastel' ? 'Pastel = sparkly pop sounds ✨' : 'Neon = arcade sounds 🕹️'} — they switch with your style. Sounds play while Let's Hang is open. Turn your ringer on (the side switch) and turn the volume up — a big pop-up shows too, even on silent.</p></div>`;
   }
   const isKid = () => S.me?.role === 'kid';
   const parents = () => S.family.filter((u) => u.role === 'parent');
@@ -1436,7 +1474,7 @@
     'ride-claim': (el) => withBusy(el, async () => { try { await api(`/rides/${el.dataset.id}/claim`, { method: 'POST' }); confetti(); toast("🚗 You're driving — everyone's been told"); } finally { loadForScreen(); } }),
     'ride-unclaim': (el) => { if (!confirm("Let the other parents know you can't drive?")) return; withBusy(el, async () => { await api(`/rides/${el.dataset.id}/unclaim`, { method: 'POST' }); toast('Other parents asked again'); loadForScreen(); }); },
     'ride-cancel': (el) => { if (!confirm('Cancel this ride for everyone?')) return; withBusy(el, async () => { await api(`/rides/${el.dataset.id}/cancel`, { method: 'POST' }); toast('Ride cancelled'); loadForScreen(); }); },
-    'sound-test': (el) => Sound.play(el.dataset.k, true),
+    'sound-test': (el) => { Sound.play(el.dataset.k, true); alertPop(el.dataset.k, 'Test alert 🔊', 'This is what a new alert looks like — tap to open it'); },
     'sound-toggle': (el) => { Sound.set(el.checked); if (el.checked) Sound.play('chime', true); toast(el.checked ? '🔊 Sounds on' : '🔇 Sounds off'); },
     pref: async (el) => { const p = { ...(S.me.notify_prefs || {}), [el.dataset.k]: el.checked }; S.me.notify_prefs = p; await api('/me', { method: 'PATCH', body: { notify_prefs: p } }).catch((e) => toast(e.message, 'warn')); toast('Saved'); },
     'fam-quick': (el) => { const t = $('#msg-input'); t.value = el.dataset.t; t.form.requestSubmit(); },
