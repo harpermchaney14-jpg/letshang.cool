@@ -1,8 +1,6 @@
-name = "lets-hang"
+name = "letshang-cool"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
-
-
 
 # Front end (HTML/CSS/JS) lives in ./public. /api/* always goes to the Worker.
 [assets]

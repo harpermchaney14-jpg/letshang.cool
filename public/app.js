@@ -95,8 +95,8 @@
   function confetti() {
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const box = document.createElement('div'); box.className = 'confetti';
-    const colors = ['#ffd400', '#ff16c7', '#00eaff', '#19f58a', '#8b00ff', '#ff7a00', '#1478ff'];
-    for (let i = 0; i < 80; i++) {
+    const colors = theme() === 'pastel' ? ['#d9c8ff', '#ffc8de', '#c6e6ff', '#d6e4cb', '#ffd8c4', '#fff0b3', '#ffffff'] : ['#ffd400', '#ff16c7', '#00eaff', '#19f58a', '#8b00ff', '#ff7a00', '#1478ff'];
+    for (let i = 0; i < 45; i++) {
       const p = document.createElement('i');
       p.style.left = Math.random() * 100 + 'vw'; p.style.background = colors[i % colors.length];
       p.style.setProperty('--x', (Math.random() * 160 - 80) + 'px'); p.style.setProperty('--r', (Math.random() * 1080 - 540) + 'deg');
@@ -104,6 +104,19 @@
       box.appendChild(p);
     }
     document.body.appendChild(box); setTimeout(() => box.remove(), 3400);
+  }
+  function applyTheme(t) {
+    const th = ['neon', 'pastel'].includes(t) ? t : 'neon';
+    document.documentElement.dataset.theme = th;
+    store.set('lh_theme', th);
+    const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = th === 'pastel' ? '#f4ecff' : '#05070d';
+  }
+  function stylePicker() {
+    const cur = theme();
+    const opt = (k, name, desc, sw) => `<button class="style-opt ${cur === k ? 'on' : ''}" data-act="theme" data-t="${k}" aria-pressed="${cur === k}">
+      <span class="sw">${sw.map((c) => `<i style="background:${c}"></i>`).join('')}</span><b>${name}</b><small>${desc}</small></button>`;
+    return `<div class="panel stack"><h3>My style</h3><p class="small muted">Only changes how the app looks for you.</p>
+      <div class="style-grid">${opt('neon', 'Neon', 'Graffiti + glow', ['#ff16c7', '#00eaff', '#ffd400', '#12002a'])}${opt('pastel', 'Pastel', 'Soft + dreamy', ['#d9c8ff', '#d6e4cb', '#ffc8de', '#c6e6ff'])}</div></div>`;
   }
   const isKid = () => S.me?.role === 'kid';
   const parents = () => S.family.filter((u) => u.role === 'parent');
@@ -226,8 +239,7 @@
   const subHeader = (title, extra = '') => `<div class="subhead"><button class="icon-button" data-act="back" aria-label="Back">${I.back}</button><h2>${title}</h2>${extra}</div>`;
   const sectionTitle = (t, extra = '') => `<div class="section-title"><h2>${t}</h2>${extra}</div>`;
   const DOODLES = `<svg class="doodles" viewBox="0 0 400 320" preserveAspectRatio="xMidYMin meet" aria-hidden="true">
-    <defs><filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
-    <g fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)" stroke-width="5">
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="5">
       <path d="M26 86 34 42l20 20 14-30 14 30 20-20 8 44z" stroke="#ffd400"/>
       <circle cx="350" cy="62" r="34" stroke="#ffd400"/><path d="M332 50l10 10m0-10-10 10M358 50l10 10m0-10-10 10M332 76q18 16 36 0" stroke="#ffd400" stroke-width="4"/>
       <path d="M20 182c0-12 9-19 19-19h30c10 0 19 7 19 19 0 14-7 26-17 26-7 0-10-9-17-9s-10 9-17 9c-10 0-17-12-17-26z" stroke="#00eaff" stroke-width="4"/>
@@ -235,7 +247,10 @@
       <path d="M40 262l6 13 14 2-10 10 2 14-12-7-12 7 2-14-10-10 14-2z" stroke="#ffd400" stroke-width="4"/>
       <path d="M354 266l6 13 14 2-10 10 2 14-12-7-12 7 2-14-10-10 14-2z" stroke="#19f58a" stroke-width="4"/>
     </g></svg>`;
-  const heroHTML = (tag) => `<section class="hero">${DOODLES}<h1 class="hero-logo"><span class="lets">Let's</span><span class="hang">Hang</span></h1><p class="hero-tagline">${tag}</p></section>`;
+  const theme = () => document.documentElement.dataset.theme || 'neon';
+  const STICKERS = { neon: ['⭐', '🎮', '⚡', '🛹'], pastel: ['✨', '🫧', '🌸', '💿'] };
+  const stickers = () => (STICKERS[theme()] || STICKERS.neon).map((e, i) => `<span class="stk s${i + 1}" aria-hidden="true">${e}</span>`).join('');
+  const heroHTML = (tag) => `<section class="hero">${DOODLES}${stickers()}<h1 class="hero-logo"><span class="lets">Let's</span><span class="hang">Hang</span></h1><p class="hero-tagline">${tag}</p></section>`;
   const card = (cls, act, icon, label, extra = '', n = 0) => `<button class="action-card ${cls}" data-act="${act}" ${extra}>
       ${n ? `<span class="notification-badge card-badge">${n > 9 ? '9+' : n}</span>` : ''}
       <span class="action-icon" aria-hidden="true">${icon}</span>
@@ -270,6 +285,7 @@
           <span class="action-icon" aria-hidden="true">🧢</span><span class="action-label">I'm a kid<span class="action-arrow" aria-hidden="true">→</span></span></button>
       </div>
       ${form}
+      <div class="auth-style">${stylePicker()}</div>
     </div>`;
   }
   function renderSignup() {
@@ -313,6 +329,7 @@
         <div class="ava-grid" role="radiogroup" aria-label="Avatar">${Object.keys(AVATAR).map((k) => `<button class="ava-pick" role="radio" data-act="ob-ava" data-k="${k}" aria-checked="${S.me.avatar === k}" aria-label="${k}">${ava(k)}</button>`).join('')}</div>
         <label class="fld"><span>Display name (what friends see)</span><input class="field" id="ob-name" maxlength="24" value="${esc(S.me.display_name)}"></label>
         <p class="small muted">Use a first name or nickname — never your last name, school, or address.</p>
+        ${stylePicker()}
         <button class="primary-button block big" data-act="ob-save">Next</button></div>`;
     if (st === 2) return `<div class="panel stack ob-top">${dots}
         <h2>Stay safe 🛡️</h2>
@@ -621,6 +638,7 @@
         <p class="small muted">@${esc(S.me.username)}</p>
         <div class="row center-row"><button class="ghost-button sm" data-act="edit-profile">✏️ Edit profile</button></div>
       </div>
+      ${stylePicker()}
       <div class="panel stack tone-yellow">
         <h3>Friend code</h3>
         <div class="code-row"><div class="code-box">${esc(S.me.friend_code)}</div><button class="ghost-button sm" data-act="new-code">New code</button></div>
@@ -641,6 +659,7 @@
     const p = S.me.notify_prefs || {};
     const tog = (k, label) => `<label class="switch-row"><span>${label}</span><input type="checkbox" role="switch" data-act="pref" data-k="${k}" ${p[k] !== false ? 'checked' : ''}></label>`;
     return `${subHeader('Settings')}
+      ${stylePicker()}
       <div class="panel stack"><h3>Notifications</h3>${tog('messages', 'New messages')}${tog('friends', 'Friend requests')}${tog('plans', 'Plan updates')}</div>
       <div class="panel stack tone-pink"><h3>Safety</h3>
         <p class="small">If anyone makes you feel uncomfortable: <b>Block</b> or <b>Report</b> them from the chat ⋯ menu, and tell a parent.</p>
@@ -845,6 +864,7 @@
         <p class="form-error" data-err role="alert"></p>
         <div class="row wrap"><button class="primary-button sm" type="submit">Save</button><button type="button" class="ghost-button sm" data-act="sms-test">Send test text</button></div>
       </form>
+      ${stylePicker()}
       ${sectionTitle('Our hang house', '<button class="ghost-button sm" data-act="house-edit">+ Add</button>')}
       <div class="panel list">${houses.length ? houses.map((hh) => `<div class="row-btn static"><span class="house-em" style="--house:${houseColor(hh.id)}" aria-hidden="true">${houseEm(hh.id)}</span><span class="grow"><b>${esc(hh.name)}</b><span class="sub">${esc(hh.address || 'No address')}</span></span>
           <button class="ghost-button sm" data-act="house-edit" data-id="${hh.id}">Edit</button></div>`).join('') : '<p class="small muted">Add your home so your kids (and their approved friends) can check in when they hang out there.</p>'}</div>
@@ -1006,7 +1026,7 @@
     try { await fn(); } catch (e) { toast(e.message, 'warn'); }
     finally { S.busy = false; if (el?.isConnected) { el.removeAttribute('aria-busy'); el.classList.remove('is-loading'); } }
   }
-  async function refreshMe() { const d = await api('/me'); S.me = d.user; S.family = d.family; S.badges = d.badges; S.smsLive = d.sms_live; }
+  async function refreshMe() { const d = await api('/me'); S.me = d.user; S.family = d.family; S.badges = d.badges; S.smsLive = d.sms_live; if (S.me.theme && S.me.theme !== theme()) applyTheme(S.me.theme); }
   const setPressed = (el, sel, attr = 'aria-pressed') => $$(sel, el.closest('form') || document).forEach((b) => { b.setAttribute(attr, String(b === el)); if (attr !== 'aria-pressed') b.setAttribute('aria-pressed', String(b === el)); });
 
   const A = {
@@ -1124,6 +1144,12 @@
     'idea-next': () => { let n; do { n = pick(IDEAS); } while (n === S.idea); S.idea = n; paint(); },
 
     // profile / settings
+    theme: async (el) => {
+      applyTheme(el.dataset.t);
+      if (S.me) { S.me.theme = el.dataset.t; api('/me', { method: 'PATCH', body: { theme: el.dataset.t } }).catch((e) => toast(e.message, 'warn')); }
+      if (S.me && isKid() && !S.me.onboarded) { const name = $('#ob-name')?.value; $('#app').innerHTML = `<main class="view onboarding">${renderOnboarding()}</main>`; if (name && $('#ob-name')) $('#ob-name').value = name; } else render();
+      toast(el.dataset.t === 'pastel' ? '🌸 Pastel on' : '⚡ Neon on');
+    },
     'edit-profile': () => sheetEditProfile(),
     'sheet-ava': (el) => { setPressed(el, '.ava-pick', 'aria-checked'); el.closest('form').avatar.value = el.dataset.k; },
     pref: async (el) => { const p = { ...(S.me.notify_prefs || {}), [el.dataset.k]: el.checked }; S.me.notify_prefs = p; await api('/me', { method: 'PATCH', body: { notify_prefs: p } }).catch((e) => toast(e.message, 'warn')); toast('Saved'); },
@@ -1244,6 +1270,7 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden && S.me) loadForScreen(); });
 
   // ================================================================ boot
+  applyTheme(store.get('lh_theme', 'neon'));
   async function boot() {
     try { await refreshMe(); } catch { S.me = null; render(); return; }
     S.tab = 'home'; S.view = null; S.onboardStep = 0;

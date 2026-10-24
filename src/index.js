@@ -24,6 +24,7 @@ const firstName = (n) => String(n || '').split(' ')[0];
 
 const USERNAME_RE = /^[a-z0-9._-]{3,30}$/;
 const AVATARS = ['star', 'fox', 'cat', 'unicorn', 'alien', 'panda', 'frog', 'fire', 'skate', 'music', 'gamer', 'butterfly', 'crown', 'rocket', 'rainbow', 'bolt'];
+const THEMES = ['neon', 'pastel'];
 const TZ = (env) => env.TIMEZONE || 'America/Chicago';
 const when = (env, iso) => new Intl.DateTimeFormat('en-US', {
   timeZone: TZ(env), weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
@@ -178,6 +179,17 @@ export default {
   },
 };
 
+// ================================================================ health
+add('GET', '/api/health', async ({ env }) => {
+  try {
+    const t = await all(env, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','friendships','houses','plans')");
+    const cols = await all(env, "SELECT name FROM pragma_table_info('users') WHERE name = 'theme'");
+    return json({ ok: t.length === 4 && cols.length === 1, tables: t.map((x) => x.name).sort(), theme_column: cols.length === 1 });
+  } catch (e) {
+    return json({ ok: false, error: 'Database not reachable — is the D1 binding named DB?' }, { status: 500 });
+  }
+}, { auth: false });
+
 // ================================================================ accounts
 add('POST', '/api/signup', async ({ env, request, body }) => {
   const name = str(body.name, 40);
@@ -297,6 +309,7 @@ add('PATCH', '/api/me', async ({ env, user, body }) => {
   }
   if (body.avatar !== undefined) { if (!AVATARS.includes(body.avatar)) fail(400, 'Pick an avatar from the list'); sets.push('avatar = ?'); vals.push(body.avatar); }
   if (body.onboarded !== undefined) { sets.push('onboarded = ?'); vals.push(bool(body.onboarded)); }
+  if (body.theme !== undefined) { if (!THEMES.includes(body.theme)) fail(400, 'Pick a style from the list'); sets.push('theme = ?'); vals.push(body.theme); }
   if (body.notify_prefs && typeof body.notify_prefs === 'object') {
     const p = {};
     for (const k of ['messages', 'friends', 'plans', 'ready', 'checkins']) if (k in body.notify_prefs) p[k] = !!body.notify_prefs[k];

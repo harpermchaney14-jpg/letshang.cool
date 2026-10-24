@@ -57,7 +57,7 @@ export async function readSession(env, request) {
   if (!token) return null;
   return env.DB.prepare(
     `SELECT u.id, u.family_id, u.role, u.display_name, u.username, u.avatar, u.friend_code, u.phone,
-            u.sms_opt_in, u.notify_prefs, u.chat_enabled, u.onboarded, f.name AS family_name
+            u.sms_opt_in, u.notify_prefs, u.chat_enabled, u.onboarded, u.theme, f.name AS family_name
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN families f ON f.id = u.family_id
