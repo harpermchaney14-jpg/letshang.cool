@@ -18,18 +18,48 @@ function addDays(dateStr, n) {
   return { date: d.toISOString().slice(0, 10), dow: d.getUTCDay() };
 }
 
-/** Today until the kids are home, otherwise the next weekday. */
-export function pickSchoolDay(fam, tz) {
+/**
+ * Why there's no school on a date (from the school calendar), or null if it's a school day.
+ * Weekends aren't listed. Dates before the first day / after the last day of a school year are summer.
+ */
+export function offDay(date, cal = []) {
+  if (!cal.length) return null;
+  const hit = cal.find((c) => c.kind === 'no_school' && c.start_date <= date && date <= c.end_date);
+  if (hit) return { title: hit.title, start_date: hit.start_date, end_date: hit.end_date };
+  const firsts = cal.filter((c) => c.kind === 'first_day'), lasts = cal.filter((c) => c.kind === 'last_day');
+  if (!firsts.length || !lasts.length) return null;
+  const inYear = firsts.some((f) => f.start_date <= date && lasts.some((l) => l.start_date >= date && l.start_date >= f.start_date));
+  return inYear ? null : { title: 'Summer break', summer: true };
+}
+
+/** Today until the kids are home, otherwise the next school day (skips weekends + school-calendar days off). */
+export function pickSchoolDay(fam, tz, cal = []) {
   const now = localNow(tz);
   const homeBy = toMin(fam.school_end) + fam.walk_minutes;
-  let offset = 0;
-  if (!(now.dow >= 1 && now.dow <= 5 && now.minutes <= homeBy)) {
-    offset = 1;
-    while (true) { const d = addDays(now.date, offset); if (d.dow >= 1 && d.dow <= 5) break; offset++; }
+  const isSchool = (d) => d.dow >= 1 && d.dow <= 5 && !offDay(d.date, cal);
+  let offset = isSchool({ date: now.date, dow: now.dow }) && now.minutes <= homeBy ? 0 : 1;
+  if (offset) {
+    while (offset < 120 && !isSchool(addDays(now.date, offset))) offset++;
+    if (offset >= 120) { const d = addDays(now.date, 1); return { ...d, label: 'Summer', days_away: 1, summer: true }; }
   }
   const day = addDays(now.date, offset);
-  const label = offset === 0 ? 'Today' : offset === 1 ? 'Tomorrow' : ({ Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday' })[DOW[day.dow]];
-  return { ...day, label };
+  const dt = new Date(day.date + 'T12:00:00Z');
+  const label = offset === 0 ? 'Today' : offset === 1 ? 'Tomorrow'
+    : offset < 7 ? ({ Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday' })[DOW[day.dow]]
+      : dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return { ...day, label, days_away: offset };
+}
+
+/** Today's reason for no school (weekdays only), plus upcoming calendar items in the next `days` days. */
+export function schoolNews(tz, cal = [], days = 14) {
+  const now = localNow(tz);
+  const off_today = now.dow >= 1 && now.dow <= 5 ? offDay(now.date, cal) : null;
+  const until = addDays(now.date, days).date;
+  const upcoming = cal.filter((c) => c.start_date <= until && (c.kind === 'no_school'
+      ? c.end_date >= now.date && !(off_today && c.start_date <= now.date) && !(c.end_date === now.date && now.dow >= 1 && now.dow <= 5)
+      : c.start_date > now.date))
+    .slice(0, 6).map(({ start_date, end_date, kind, title }) => ({ start_date, end_date, kind, title }));
+  return { today: now.date, off_today, upcoming };
 }
 
 export function schedule(fam) {

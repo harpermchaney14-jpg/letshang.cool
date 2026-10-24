@@ -233,16 +233,16 @@
       else if (v === 'family') S.fam = await api(`/family-chat/${S.view.id}`);
       else if (v === 'kid') { [S.kidView, S.kidChats] = await Promise.all([api(`/kids/${S.view.id}/safety`), api(`/chats?kid_id=${S.view.id}`).then((d) => d.chats)]); }
       else if (v === 'notifications') S.notes = (await api('/notifications')).notifications;
-      else if (v === 'plans') [S.plans, S.friends] = await Promise.all([api('/plans').then((d) => d.plans), api('/friends')]);
+      else if (v === 'plans') [S.plans, S.friends, S.school] = await Promise.all([api('/plans').then((d) => d.plans), api('/friends'), S.school || api('/school-calendar').then((d) => d.days)]);
       else if (v === 'walk') S.today = await api('/today');
       else if (v === 'rides') S.rides = (await api('/rides')).rides;
       else if (isKid()) {
-        if (S.tab === 'home') [S.plans, S.hang, S.today, S.rides] = await Promise.all([api('/plans').then((d) => d.plans), api('/hangout'), api('/today'), api('/rides').then((d) => d.rides)]);
+        if (S.tab === 'home') [S.plans, S.hang, S.today, S.rides, S.host] = await Promise.all([api('/plans').then((d) => d.plans), api('/hangout'), api('/today'), api('/rides').then((d) => d.rides), api('/host')]);
         if (S.tab === 'chat') S.chats = (await api('/chats')).chats;
         if (S.tab === 'friends') S.friends = await api('/friends');
       } else {
-        if (S.tab === 'home') [S.dash, S.hang, S.today, S.rides] = await Promise.all([api('/dashboard'), api('/hangout'), api('/today'), api('/rides').then((d) => d.rides)]);
-        if (S.tab === 'approvals' || S.tab === 'calendar') S.dash = await api('/dashboard');
+        if (S.tab === 'home') [S.dash, S.hang, S.today, S.rides, S.host] = await Promise.all([api('/dashboard'), api('/hangout'), api('/today'), api('/rides').then((d) => d.rides), api('/host')]);
+        if (S.tab === 'approvals' || S.tab === 'calendar') [S.dash, S.school] = await Promise.all([api('/dashboard'), S.school || api('/school-calendar').then((d) => d.days)]);
         if (S.tab === 'alerts') S.notes = (await api('/notifications')).notifications;
         if (S.tab === 'account') [S.hang, S.today] = await Promise.all([api('/hangout'), api('/today')]);
       }
@@ -469,9 +469,35 @@
       <p class="motivation-copy">Check in<span class="mb-sub">${h.houses.length ? 'At home or a friend\'s house' : 'Ask a parent to add your house'}</span></p>
       <span class="mb-emoji" aria-hidden="true">📍</span></button>`;
   }
+  /** Host panel: who's at our house, with check-out + "check someone in" (kids and parents of the host family). */
+  function hostPanel() {
+    const H = S.host;
+    if (!H?.houses?.length) return '';
+    const name = H.houses.length === 1 ? H.houses[0].name : 'our house';
+    return `${sectionTitle(`🏠 At ${esc(name)}`, `<button class="warm-button sm" data-act="host-checkin">+ Check in</button>`)}
+      <div class="panel list host-panel">${H.here.length ? H.here.map((k) => `<div class="row-btn static">${ava(k.avatar)}<span class="grow"><b>${esc(k.display_name)}${isKid() && k.id === S.me.id ? ' (you)' : ''}</b>
+          <span class="sub">${H.houses.length > 1 ? `${esc(k.house_name)} · ` : ''}since ${time(k.in_at)}</span></span>
+          <button class="ghost-button sm" data-act="checkout" data-id="${k.id}">Check out</button></div>`).join('')
+        : `<p class="small muted">Nobody's checked in here right now. Tap <b>+ Check in</b> when friends arrive.</p>`}</div>`;
+  }
+  function sheetHostCheckin() {
+    const H = S.host;
+    if (!H?.houses?.length) return;
+    if (!H.guests.length) { toast(H.here.length ? 'Everyone you can check in is already here 🙌' : 'Add friends first — then you can check them in here', 'warn'); return; }
+    const sess = defaultSession();
+    openSheet(`<form data-form="host-checkin" class="stack"><input type="hidden" name="house_id" value="${H.houses[0].id}"><input type="hidden" name="session" value="${sess}">
+      <h2>Who just got here? 👋</h2>
+      ${H.houses.length > 1 ? `<div class="chips seg" role="radiogroup" aria-label="House">${H.houses.map((h, i) => `<button type="button" class="chip" data-act="host-house" data-id="${h.id}" aria-pressed="${i === 0}">${houseEm(h.id)} ${esc(h.name)}</button>`).join('')}</div>` : `<p class="note">${houseEm(H.houses[0].id)} ${esc(H.houses[0].name)}</p>`}
+      <div class="chips" role="group" aria-label="Who">${H.guests.map((g) => `<button type="button" class="chip" data-act="toggle-chip" data-v="${g.id}" aria-pressed="false">${AVATAR[g.avatar]?.[0] || ''} ${esc(g.display_name)}${g.own ? ' 🏠' : ''}</button>`).join('')}</div>
+      <div class="chips seg" role="radiogroup" aria-label="When">${[['before', '🌅 Before school'], ['after', '🎒 After school'], ['other', '✨ Other']].map(([k, l]) => `<button type="button" class="chip" data-act="pick-session" data-s="${k}" aria-pressed="${sess === k}">${l}</button>`).join('')}</div>
+      <p class="small muted">Their parents get notified that you checked them in.</p>
+      <p class="form-error" data-err role="alert"></p>
+      <button class="primary-button go block big" type="submit">Check in 📍</button>
+      <button type="button" class="ghost-button block" data-act="close-sheet">Cancel</button></form>`);
+  }
   function walkBanner() {
     const t = S.today;
-    if (!t) return '';
+    if (!t || t.day.summer) return '';
     const s = t.schedule, w = t.weather?.morning;
     const line = w ? `Leave ${hm(s.leave)} · ${w.temp}° · ${esc(w.tip.split(' · ')[0])}` : `Leave ${hm(s.leave)} · bell ${hm(s.start)} · out ${hm(s.end)}`;
     return `<button class="motivation-banner" data-act="open" data-view="walk">
@@ -513,12 +539,14 @@
     return `${heroHTML(S.hang?.stay ? `You're at ${esc(S.hang.stay.house_name)}` : 'Real friends. Good vibes. Your space.')}
       ${pickupBanners(S.hang?.pickups)}
       ${rideBanners()}
+      ${schoolBanner()}
       ${b.family_messages && p0 ? `<button class="motivation-banner tone-pink" data-act="open" data-view="family" data-id="${p0.id}"><p class="motivation-copy">Message from ${esc(first(p0.display_name))}<span class="mb-sub">Tap to read</span></p><span class="mb-emoji" aria-hidden="true">💌</span></button>` : ''}
       <button class="ready-button ${lastReady ? 'sent' : ''}" data-act="ready" ${lastReady ? 'aria-disabled="true"' : ''}>
         <span class="rb-main">${lastReady ? 'Parent notified ✓' : "I'm Ready!"}</span>
         <span class="rb-sub">${lastReady ? `Sent ${ago(S.me.last_ready_at)} — they know you're ready` : 'Tap to tell your parent'}</span>
       </button>
       ${kidStayPanel()}
+      ${hostPanel()}
       <div class="dashboard-grid">
         ${card('chat', 'tab', '💬', 'Chat', 'data-tab="chat"', b.messages)}
         ${card('friends', 'tab', '🫶', 'Friends', 'data-tab="friends"')}
@@ -772,8 +800,47 @@
   }
 
   // ================================================================ plans + calendar
+  // ---- school calendar (no-school days, first/last day, quarter ends, events)
+  const SCHOOL_EM = { no_school: '🏖️', first_day: '🎒', last_day: '🎉', resume: '📚', quarter_end: '⭐', event: '📌' };
+  let schoolMapCache = null;
+  function schoolMap() {
+    if (!S.school) return {};
+    if (schoolMapCache?.src === S.school) return schoolMapCache.map;
+    const map = {};
+    for (const c of S.school) {
+      const d = new Date(c.start_date + 'T12:00:00'), end = new Date(c.end_date + 'T12:00:00');
+      for (; d <= end; d.setDate(d.getDate() + 1)) {
+        const k = localDate(d);
+        if (!map[k] || c.kind === 'no_school') map[k] = c; // a day off wins over other marks
+      }
+    }
+    schoolMapCache = { src: S.school, map };
+    return map;
+  }
+  const fmtDay = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  const fmtRange = (c) => c.start_date === c.end_date ? fmtDay(c.start_date) : `${fmtDay(c.start_date)} – ${fmtDay(c.end_date)}`;
+  function schoolList() {
+    if (!S.school) return '';
+    const today = localDate();
+    const items = S.school.filter((c) => c.end_date >= today);
+    const shown = S.schoolAll ? items : items.slice(0, 5);
+    return `${sectionTitle('🏫 School calendar', items.length > 5 ? `<button class="linkish small" data-act="school-all">${S.schoolAll ? 'Show less' : 'Whole year'}</button>` : '')}
+      <div class="panel list school-list">${shown.length ? shown.map((c) => `<div class="row-btn static sc-${c.kind}"><span class="sc-em" aria-hidden="true">${SCHOOL_EM[c.kind]}</span>
+        <span class="grow"><b>${esc(c.title)}</b><span class="sub">${fmtRange(c)}${c.kind === 'no_school' ? ' · No school' : ''}</span></span></div>`).join('')
+        : '<p class="small muted">No more school dates this year. ☀️</p>'}</div>`;
+  }
+  /** Home banner: no school today / coming up soon / classes resume. */
+  function schoolBanner() {
+    const n = S.today?.school;
+    if (!n) return '';
+    if (n.off_today) return `<div class="motivation-banner tone-green school-off" role="note"><p class="motivation-copy">No school today! 🎉<span class="mb-sub">${esc(n.off_today.title)}${n.off_today.summer ? '' : ` · back ${esc(S.today.day.label === 'Tomorrow' ? 'tomorrow' : S.today.day.label)}`}</span></p><span class="mb-emoji" aria-hidden="true">${n.off_today.summer ? '☀️' : '🏖️'}</span></div>`;
+    const soon = n.upcoming.find((c) => c.kind === 'no_school' && (new Date(c.start_date + 'T12:00:00') - new Date()) < 4 * 864e5);
+    if (soon) return `<div class="motivation-banner tone-pink" role="note"><p class="motivation-copy">No school ${esc(fmtRange(soon))}<span class="mb-sub">${esc(soon.title)} 🙌</span></p><span class="mb-emoji" aria-hidden="true">🏖️</span></div>`;
+    return '';
+  }
   function calendarHTML(plans) {
     const m = S.calMonth, start = new Date(m); start.setDate(1 - m.getDay());
+    const sm = schoolMap();
     const byDay = {};
     plans.filter((p) => p.status === 'approved').forEach((p) => { const k = dayKey(new Date(p.starts_at)); byDay[k] = (byDay[k] || 0) + 1; });
     let cells = '';
@@ -781,14 +848,16 @@
       const d = new Date(start); d.setDate(start.getDate() + i);
       if (i === 35 && d.getMonth() !== m.getMonth()) break;
       const n = byDay[dayKey(d)] || 0;
-      cells += `<button class="cal-day ${d.getMonth() !== m.getMonth() ? 'other' : ''} ${sameDay(d, new Date()) ? 'today' : ''}" data-act="cal-day" data-d="${d.toISOString()}"
-        aria-pressed="${S.calDay && sameDay(S.calDay, d) ? 'true' : 'false'}" aria-label="${d.toDateString()}${n ? `, ${n} plan${n > 1 ? 's' : ''}` : ''}">${d.getDate()}${n ? '<span class="marks"><i></i></span>' : ''}</button>`;
+      const sc = sm[localDate(d)];
+      cells += `<button class="cal-day ${d.getMonth() !== m.getMonth() ? 'other' : ''} ${sameDay(d, new Date()) ? 'today' : ''} ${sc ? `sc sc-${sc.kind}` : ''}" data-act="cal-day" data-d="${d.toISOString()}"
+        aria-pressed="${S.calDay && sameDay(S.calDay, d) ? 'true' : 'false'}" aria-label="${d.toDateString()}${sc ? `, ${sc.kind === 'no_school' ? 'no school' : ''} ${sc.title}` : ''}${n ? `, ${n} plan${n > 1 ? 's' : ''}` : ''}"${sc ? ` title="${esc(sc.title)}"` : ''}>${d.getDate()}${n ? '<span class="marks"><i></i></span>' : ''}</button>`;
     }
     return `<div class="panel"><div class="cal-head">
         <button class="icon-button" data-act="cal-prev" aria-label="Previous month">${I.left}</button>
         <h2>${m.toLocaleDateString([], { month: 'long', year: 'numeric' })}</h2>
         <button class="icon-button" data-act="cal-next" aria-label="Next month">${I.right}</button></div>
-      <div class="cal-grid">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d) => `<div class="cal-dow" aria-hidden="true">${d}</div>`).join('')}${cells}</div></div>`;
+      <div class="cal-grid">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d) => `<div class="cal-dow" aria-hidden="true">${d}</div>`).join('')}${cells}</div>
+      ${S.school ? `<div class="cal-key" aria-hidden="true"><span><i class="k-off"></i>No school</span><span><i class="k-mark"></i>First / last day · quarter end</span><span><i class="k-plan"></i>Plan</span></div>` : ''}</div>`;
   }
   function planCard(p, { approve = false } = {}) {
     const others = p.members.filter((m) => !(isKid() && m.id === S.me.id));
@@ -819,7 +888,9 @@
     if (S.calDay) approved = plans.filter((p) => p.status === 'approved' && sameDay(new Date(p.starts_at), S.calDay));
     const waiting = upcoming.filter((p) => p.status === 'waiting');
     const closed = upcoming.filter((p) => p.status === 'declined' || p.status === 'cancelled');
+    const scDay = S.calDay && schoolMap()[localDate(S.calDay)];
     return `${sectionTitle(S.calDay ? dayLabel(S.calDay) : 'Confirmed', S.calDay ? '<button class="linkish small" data-act="cal-clear">Show all</button>' : '')}
+      ${scDay ? `<p class="note sc-note">${SCHOOL_EM[scDay.kind]} <b>${esc(scDay.title)}</b>${scDay.kind === 'no_school' ? ' — no school' : ''}</p>` : ''}
       ${approved.length ? approved.map((p) => planCard(p)).join('') : empty('📅', S.calDay ? 'No confirmed plans this day.' : 'No confirmed plans yet.')}
       ${waiting.length ? sectionTitle('Waiting for parents') + waiting.map((p) => planCard(p, { approve: !isKid() })).join('') : ''}
       ${closed.length ? sectionTitle('Not happening') + closed.map((p) => planCard(p)).join('') : ''}`;
@@ -829,7 +900,7 @@
     return `${subHeader('Made a Plan')}
       <button class="warm-button block big" data-act="plan-new">📅 Make a new plan</button>
       <p class="note">Plans are confirmed only after every kid's parent approves.</p>
-      ${calendarHTML(S.plans)}${plansLists(S.plans)}`;
+      ${calendarHTML(S.plans)}${plansLists(S.plans)}${schoolList()}`;
   }
   function sheetPlan(friendId, title = '') {
     const fr = S.friends?.friends || [];
@@ -967,6 +1038,7 @@
     return `${heroHTML('Parent dashboard')}
       ${pickupBanners(h?.pickups, true)}
       ${rideBanners()}
+      ${schoolBanner()}
       ${nAppr ? `<button class="motivation-banner tone-yellow" data-act="tab" data-tab="approvals"><p class="motivation-copy">${nAppr} thing${nAppr > 1 ? 's' : ''} need${nAppr > 1 ? '' : 's'} your OK<span class="mb-sub">Friend requests and plans</span></p><span class="mb-emoji" aria-hidden="true">✋</span></button>` : ''}
       <div class="dashboard-grid">
         ${card('plan', 'tab', '✅', 'Approvals', 'data-tab="approvals"', nAppr)}
@@ -991,7 +1063,7 @@
             <button class="ghost-button sm" data-act="open" data-view="kid" data-id="${k.id}">🛡️ Friends &amp; safety</button>
           </div></div>`;
         }).join('')}
-      ${h?.at_my_houses?.length ? `${sectionTitle('At our house')}<div class="panel list">${h.at_my_houses.map((c) => `<div class="row-btn static">${ava(c.avatar)}<span class="grow"><b>${esc(c.display_name)}</b><span class="sub">${esc(c.house_name)} · since ${time(c.in_at)}</span></span></div>`).join('')}</div>` : ''}
+      ${hostPanel()}
       ${upcoming.length ? sectionTitle('Coming up') + upcoming.map((p) => planCard(p)).join('') : ''}`;
   }
   function parentApprovals() {
@@ -1010,7 +1082,7 @@
   }
   function parentCalendar() {
     if (!S.dash) return sectionTitle('Calendar') + empty('⏳', 'Loading…');
-    return `${sectionTitle('Calendar')}${calendarHTML(S.dash.plans)}${plansLists(S.dash.plans)}`;
+    return `${sectionTitle('Calendar')}${calendarHTML(S.dash.plans)}${plansLists(S.dash.plans)}${schoolList()}`;
   }
   function viewParentKid() {
     const v = S.kidView;
@@ -1266,6 +1338,8 @@
       toast('👋 Checked out'); loadForScreen();
     }),
     headsup: (el) => sheetHeadsUp(Number(el.dataset.id)),
+    'host-checkin': () => sheetHostCheckin(),
+    'host-house': (el) => { setPressed(el, '[data-act=host-house]'); el.closest('form').house_id.value = el.dataset.id; },
     eta: (el) => { S.eta = Number(el.dataset.v); setPressed(el, '[data-act=eta]'); },
     'pickup-ack': (el) => withBusy(el, async () => { await api(`/pickups/${el.dataset.id}/ack`, { method: 'POST' }); toast("👍 Sent! They know you got it."); loadForScreen(); }),
     history: (el) => sheetHistory(Number(el.dataset.id)),
@@ -1311,6 +1385,7 @@
     'cal-next': () => { S.calMonth = new Date(S.calMonth.getFullYear(), S.calMonth.getMonth() + 1, 1); paint(); },
     'cal-day': (el) => { const d = new Date(el.dataset.d); S.calDay = S.calDay && sameDay(S.calDay, d) ? null : d; paint(); },
     'cal-clear': () => { S.calDay = null; paint(); },
+    'school-all': () => { S.schoolAll = !S.schoolAll; paint(); },
 
     // games
     game: (el) => { S.game = el.dataset.g || null; if (S.game === 'memory') newMemory(); paint(); scrollTo(0, 0); },
@@ -1419,6 +1494,13 @@
         from_place: d.get('from_place'), to_place: d.get('to_place'), note: d.get('note'), friend_ids } });
       closeSheet(); toast(`🚗 Asked ${r.parents_asked} parent${r.parents_asked === 1 ? '' : 's'} — you'll hear when someone says yes`);
       loadForScreen();
+    },
+    'host-checkin': async (f, d) => {
+      const ids = $$('[data-act=toggle-chip][aria-pressed=true]', f).map((b) => Number(b.dataset.v));
+      if (!ids.length) throw new Error('Tap who just got here');
+      const done = [];
+      for (const id of ids) { await api('/checkin', { method: 'POST', body: { kid_id: id, house_id: Number(d.get('house_id')), session: d.get('session') } }); done.push(id); }
+      closeSheet(); toast(`📍 Checked in ${done.length} ${done.length === 1 ? 'person' : 'people'} — parents notified`); loadForScreen();
     },
     checkin: async (f, d) => {
       const kidId = Number(d.get('kid_id'));

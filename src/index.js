@@ -3,7 +3,7 @@
 
 import { hashPassword, verifyPassword, createSession, readSession, destroySession } from './auth.js';
 import { sendSms, normalizePhone, verifyTwilioSignature, smsConfigured } from './sms.js';
-import { TIME_RE, toMin, localNow, pickSchoolDay, schedule, walkWeather, geocode } from './today.js';
+import { TIME_RE, toMin, localNow, pickSchoolDay, schedule, walkWeather, geocode, schoolNews } from './today.js';
 import { MIGRATIONS } from './schema.js';
 
 // ================================================================ helpers
@@ -1030,6 +1030,22 @@ async function housesForKid(env, kid) {
          WHERE (fr.kid_a = ?2 OR fr.kid_b = ?2) AND fr.status = 'active'))
       ORDER BY (h.family_id = ?1) DESC, h.name`, kid.family_id, kid.id);
 }
+/** Kids a host family may check in/out: its own kids + approved friends of any of its kids. */
+async function hostGuests(env, familyId) {
+  return all(env,
+    `SELECT DISTINCT u.id, u.display_name, u.avatar, u.family_id FROM users u
+      WHERE u.role = 'kid' AND (u.family_id = ?1 OR u.id IN (
+        SELECT CASE WHEN fr.kid_a = k.id THEN fr.kid_b ELSE fr.kid_a END
+          FROM friendships fr JOIN users k ON k.family_id = ?1 AND k.role = 'kid' AND (fr.kid_a = k.id OR fr.kid_b = k.id)
+         WHERE fr.status = 'active'))
+      ORDER BY u.family_id = ?1 DESC, u.display_name`, familyId);
+}
+/** Is this kid someone the user can manage as a host (not their own kid / not themselves)? Returns the kid row or null. */
+async function hostGuest(env, user, kidId) {
+  const id = toInt(kidId);
+  if (!id) return null;
+  return (await hostGuests(env, user.family_id)).find((g) => g.id === id) || null;
+}
 async function openStay(env, kidId) {
   return first(env,
     `SELECT c.id, c.house_id, c.session, c.in_at, h.name AS house_name, h.family_id AS house_family_id
@@ -1098,11 +1114,37 @@ add('GET', '/api/hangout', async ({ env, user }) => {
   return json({ kids, at_my_houses: atMyHouses, pickups, houses: await all(env, 'SELECT id, name, address, notes FROM houses WHERE family_id = ? AND active = 1', user.family_id) });
 });
 
+// Host view: "who's at our house" + everyone the host family may check in.
+add('GET', '/api/host', async ({ env, user }) => {
+  const houses = await all(env, 'SELECT id, name FROM houses WHERE family_id = ? AND active = 1 ORDER BY name', user.family_id);
+  if (!houses.length) return json({ houses, here: [], guests: [] });
+  const here = await all(env,
+    `SELECT c.kid_id AS id, u.display_name, u.avatar, c.house_id, h.name AS house_name, c.in_at, c.session
+       FROM checkins c JOIN houses h ON h.id = c.house_id JOIN users u ON u.id = c.kid_id
+      WHERE h.family_id = ? AND c.out_at IS NULL ORDER BY c.in_at`, user.family_id);
+  const hereIds = new Set(here.map((k) => k.id));
+  // Don't reveal where guests are when they're not here — only "here" or "not here".
+  const guests = (await hostGuests(env, user.family_id)).filter((g) => !hereIds.has(g.id))
+    .map(({ id, display_name, avatar, family_id }) => ({ id, display_name, avatar, own: family_id === user.family_id }));
+  return json({ houses, here, guests });
+});
+
 add('POST', '/api/checkin', async ({ env, ctx, user, body }) => {
-  const kid = user.role === 'kid' ? await kidRow(env, user.id) : await ownKid(env, user, body.kid_id);
-  const allowed = await housesForKid(env, kid);
-  const house = allowed.find((h) => h.id === toInt(body.house_id));
-  if (!house) fail(403, 'You can check in at your house or an approved friend\'s house');
+  const self = user.role === 'kid' && (!body.kid_id || toInt(body.kid_id) === user.id);
+  const familyKid = user.role === 'parent' ? await first(env, `SELECT id FROM users WHERE id = ? AND family_id = ? AND role = 'kid'`, toInt(body.kid_id), user.family_id) : null;
+  let kid, house, asHost = false;
+  if (self || familyKid) {
+    kid = self ? await kidRow(env, user.id) : await kidRow(env, familyKid.id);
+    house = (await housesForKid(env, kid)).find((h) => h.id === toInt(body.house_id));
+    if (!house) fail(403, 'You can check in at your house or an approved friend\'s house');
+  } else {
+    // Host checking a guest in: only at the host's own house, only kids who are friends of the host family.
+    house = await first(env, 'SELECT h.id, h.name, h.family_id FROM houses h WHERE h.id = ? AND h.active = 1', toInt(body.house_id));
+    if (!house || house.family_id !== user.family_id) fail(403, 'You can only check people in at your own house');
+    const g = await hostGuest(env, user, body.kid_id);
+    if (!g) fail(403, 'You can only check in your family or approved friends');
+    kid = await kidRow(env, g.id); asHost = true;
+  }
   let session = ['before', 'after', 'other'].includes(body.session) ? body.session : (localNow(TZ(env)).hour < 11 ? 'before' : 'after');
   const open = await openStay(env, kid.id);
   if (open && open.house_id === house.id) fail(409, `Already checked in at ${house.name}`);
@@ -1112,16 +1154,29 @@ add('POST', '/api/checkin', async ({ env, ctx, user, body }) => {
   stmts.push(env.DB.prepare('INSERT INTO checkins (kid_id, house_id, session, in_at, in_by) VALUES (?, ?, ?, ?, ?)').bind(kid.id, house.id, session, stamp, user.id));
   await env.DB.batch(stmts);
   const msg = `${firstName(kid.display_name)} checked in at ${house.name}${SESSION_LABEL[session] ? ` (${SESSION_LABEL[session]})` : ''}`;
+  const by = asHost ? ` · by ${firstName(user.display_name)}` : '';
   const recipients = [...await parentsOf(env, kid.family_id)];
   if (house.family_id !== kid.family_id) recipients.push(...await parentsOf(env, house.family_id));
-  await notify(env, ctx, recipients.filter((p) => p.id !== user.id), { type: 'checkin', title: msg, body: `at ${clock(env, stamp)}`, link: 'home' }, { sms: true });
+  await notify(env, ctx, recipients.filter((p) => p.id !== user.id), { type: 'checkin', title: msg, body: `at ${clock(env, stamp)}${by}`, link: 'home' }, { sms: true });
+  if (asHost && kid.id !== user.id) await notify(env, ctx, [kid], { type: 'checkin', title: `${firstName(user.display_name)} checked you in at ${house.name}`, body: `at ${clock(env, stamp)}`, link: 'home' });
   return json({ ok: true, house: house.name });
 });
 
 add('POST', '/api/checkout', async ({ env, ctx, user, body }) => {
-  const kid = user.role === 'kid' ? await kidRow(env, user.id) : await ownKid(env, user, body.kid_id);
-  const open = await openStay(env, kid.id);
-  if (!open) fail(409, `${firstName(kid.display_name)} isn't checked in anywhere`);
+  const self = user.role === 'kid' && (!body.kid_id || toInt(body.kid_id) === user.id);
+  const familyKid = user.role === 'parent' ? await first(env, `SELECT id FROM users WHERE id = ? AND family_id = ? AND role = 'kid'`, toInt(body.kid_id), user.family_id) : null;
+  let kid, open, asHost = false;
+  if (self || familyKid) {
+    kid = await kidRow(env, self ? user.id : familyKid.id);
+    open = await openStay(env, kid.id);
+    if (!open) fail(409, `${firstName(kid.display_name)} isn't checked in anywhere`);
+  } else {
+    // Host checking a guest out: only someone who is checked in at the host's own house.
+    kid = await kidRow(env, toInt(body.kid_id));
+    open = kid && await openStay(env, kid.id);
+    if (!open || open.house_family_id !== user.family_id) fail(403, "You can only check out people who are at your house");
+    asHost = true;
+  }
   const stamp = nowIso();
   await env.DB.batch([
     env.DB.prepare('UPDATE checkins SET out_at = ?, out_by = ? WHERE id = ?').bind(stamp, user.id, open.id),
@@ -1129,7 +1184,8 @@ add('POST', '/api/checkout', async ({ env, ctx, user, body }) => {
   ]);
   const recipients = [...await parentsOf(env, kid.family_id)];
   if (open.house_family_id !== kid.family_id) recipients.push(...await parentsOf(env, open.house_family_id));
-  await notify(env, ctx, recipients.filter((p) => p.id !== user.id), { type: 'checkin', title: `${firstName(kid.display_name)} checked out of ${open.house_name}`, body: `at ${clock(env, stamp)}`, link: 'home' }, { sms: true });
+  await notify(env, ctx, recipients.filter((p) => p.id !== user.id), { type: 'checkin', title: `${firstName(kid.display_name)} checked out of ${open.house_name}`, body: `at ${clock(env, stamp)}${asHost ? ` · by ${firstName(user.display_name)}` : ''}`, link: 'home' }, { sms: true });
+  if (asHost && kid.id !== user.id) await notify(env, ctx, [kid], { type: 'checkin', title: `${firstName(user.display_name)} checked you out of ${open.house_name}`, body: `at ${clock(env, stamp)}`, link: 'home' });
   return json({ ok: true });
 });
 
@@ -1176,12 +1232,14 @@ add('POST', '/api/pickups/:id/ack', async ({ env, ctx, user, params }) => {
 
 // ---- school schedule + walk weather (per family)
 const famRow = (env, id) => first(env, 'SELECT id, name, school_name, school_arrive, school_start, school_end, walk_minutes, walk_miles, location_name, lat, lon FROM families WHERE id = ?', id);
+const schoolCal = (env) => all(env, 'SELECT start_date, end_date, kind, title FROM school_calendar ORDER BY start_date, id');
 add('GET', '/api/today', async ({ env, ctx, user }) => {
-  const fam = await famRow(env, user.family_id);
-  const day = pickSchoolDay(fam, TZ(env));
+  const [fam, cal] = await Promise.all([famRow(env, user.family_id), schoolCal(env)]);
+  const day = pickSchoolDay(fam, TZ(env), cal);
   const sched = schedule(fam);
-  return json({ day, schedule: sched, weather: await walkWeather(env, ctx, fam, day, sched), location: fam.location_name, school_name: fam.school_name });
+  return json({ day, schedule: sched, weather: await walkWeather(env, ctx, fam, day, sched), location: fam.location_name, school_name: fam.school_name, school: schoolNews(TZ(env), cal) });
 });
+add('GET', '/api/school-calendar', async ({ env }) => json({ days: await schoolCal(env) }));
 add('PATCH', '/api/family/schedule', async ({ env, user, body }) => {
   const fam = await famRow(env, user.family_id);
   const next = { ...fam };

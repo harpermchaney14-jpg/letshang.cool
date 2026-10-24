@@ -224,3 +224,15 @@ html[data-theme="pastel"] #toast { background: #fff !important; color: var(--p-i
 
 /* --- style picker (shared by both themes) --- */
 html[data-theme="pastel"] .style-opt { color: var(--p-ink); }
+
+/* --- school calendar --- */
+html[data-theme="pastel"] .cal-day.sc-no_school { color: #b8326f; background: repeating-linear-gradient(135deg, rgba(255, 95, 162, .22) 0 5px, rgba(255, 200, 222, .35) 5px 10px); }
+html[data-theme="pastel"] .cal-day.sc-first_day, html[data-theme="pastel"] .cal-day.sc-last_day, html[data-theme="pastel"] .cal-day.sc-quarter_end, html[data-theme="pastel"] .cal-day.sc-resume { box-shadow: inset 0 0 0 2px var(--p-mint-d); }
+html[data-theme="pastel"] .cal-day.sc-no_school::after { background: var(--p-pink-d); }
+html[data-theme="pastel"] .cal-day.sc-first_day::after, html[data-theme="pastel"] .cal-day.sc-last_day::after, html[data-theme="pastel"] .cal-day.sc-quarter_end::after, html[data-theme="pastel"] .cal-day.sc-resume::after { background: var(--p-mint-d); }
+html[data-theme="pastel"] .cal-key { color: var(--p-ink-2); }
+html[data-theme="pastel"] .cal-key .k-off { background: repeating-linear-gradient(135deg, rgba(255, 95, 162, .5) 0 3px, rgba(255, 200, 222, .5) 3px 6px); }
+html[data-theme="pastel"] .cal-key .k-mark { box-shadow: inset 0 0 0 2px var(--p-mint-d); }
+html[data-theme="pastel"] .cal-key .k-plan { background: var(--p-lav-d); }
+html[data-theme="pastel"] .school-list .sc-no_school b { color: #b8326f; }
+html[data-theme="pastel"] .cal-day.sc[aria-pressed="true"] { background: var(--p-lav-d) !important; color: #fff !important; }

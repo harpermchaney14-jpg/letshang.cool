@@ -718,3 +718,25 @@ html[data-theme="pastel"] .style-opt.on { border-color: var(--p-lav-d); box-shad
 .ride-card h3 { margin: 0; }
 .ride-card .ride-em { font-size: 34px; line-height: 1; margin-right: 10px; }
 .ride-card .warm-button { flex: 1 1 auto; }
+
+/* section-title buttons stay on one line */
+.section-title > button, .section-title > a { white-space: nowrap; flex-shrink: 0; }
+
+/* ===== school calendar ===== */
+.cal-day.sc-no_school { border-radius: 12px; color: #ff9bd9; background: repeating-linear-gradient(135deg, rgba(255, 22, 199, .28) 0 5px, rgba(255, 22, 199, .1) 5px 10px); }
+.cal-day.sc-first_day, .cal-day.sc-last_day, .cal-day.sc-quarter_end, .cal-day.sc-resume { box-shadow: inset 0 0 0 2px var(--cyan); }
+.cal-day.sc::after { content: ''; position: absolute; top: 3px; right: 4px; width: 6px; height: 6px; border-radius: 50%; }
+.cal-day.sc-no_school::after { background: var(--pink); }
+.cal-day.sc-first_day::after, .cal-day.sc-last_day::after, .cal-day.sc-quarter_end::after, .cal-day.sc-resume::after { background: var(--cyan); }
+.cal-day.sc-event::after { background: var(--yellow); }
+.cal-key { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; font-size: 12px; font-weight: 800; color: var(--dim); }
+.cal-key span { display: inline-flex; align-items: center; gap: 6px; }
+.cal-key i { display: inline-block; width: 14px; height: 14px; border-radius: 4px; }
+.cal-key .k-off { background: repeating-linear-gradient(135deg, rgba(255, 22, 199, .6) 0 3px, rgba(255, 22, 199, .2) 3px 6px); }
+.cal-key .k-mark { box-shadow: inset 0 0 0 2px var(--cyan); border-radius: 50%; }
+.cal-key .k-plan { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); }
+.school-list .sc-em { font-size: 24px; width: 34px; text-align: center; }
+.school-list .sc-no_school b { color: var(--pink); }
+.sc-note { margin-bottom: 10px; }
+.motivation-banner.school-off { cursor: default; }
+.cal-day.sc[aria-pressed="true"] { background: linear-gradient(135deg, var(--purple), var(--pink)) !important; color: #fff !important; }
