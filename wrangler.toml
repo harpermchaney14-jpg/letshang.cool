@@ -2,10 +2,7 @@ name = "lets-hang"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
 
-# Serve the app at https://letshang.cool (the domain must be in this Cloudflare account)
-routes = [
-  { pattern = "letshang.cool", custom_domain = true },
-]
+
 
 # Front end (HTML/CSS/JS) lives in ./public. /api/* always goes to the Worker.
 [assets]
