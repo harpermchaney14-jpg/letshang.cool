@@ -709,3 +709,12 @@ button.profile-chip { appearance: none; background: none; border: 0; padding: 0;
 html[data-theme="pastel"] .style-opt { background: rgba(255,255,255,.75); border: 2px solid #fff; color: var(--p-ink); }
 html[data-theme="pastel"] .style-opt b { font-family: var(--serif); font-style: italic; }
 html[data-theme="pastel"] .style-opt.on { border-color: var(--p-lav-d); box-shadow: 0 10px 20px -12px rgba(110,70,170,.6); }
+
+/* ===== rides ===== */
+.motivation-banner.tone-blue { border-color: var(--cyan); box-shadow: 6px 6px 0 rgba(0, 234, 255, .5) !important; background: linear-gradient(120deg, rgba(0, 234, 255, .22), rgba(10, 0, 30, .9) 60%) !important; }
+.motivation-banner.tone-blue .mb-sub { color: var(--cyan); }
+.ride-ask .mb-emoji { animation: bob 2.4s ease-in-out 3; }
+.ride-card { margin-bottom: 14px; }
+.ride-card h3 { margin: 0; }
+.ride-card .ride-em { font-size: 34px; line-height: 1; margin-right: 10px; }
+.ride-card .warm-button { flex: 1 1 auto; }

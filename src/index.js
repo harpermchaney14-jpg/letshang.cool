@@ -204,6 +204,7 @@ export default {
       env.DB.prepare('DELETE FROM family_messages WHERE created_at < ?').bind(ago(365 * 864e5)),
       env.DB.prepare('DELETE FROM ready_events WHERE created_at < ?').bind(ago(30 * 864e5)),
       env.DB.prepare('DELETE FROM sms_log WHERE created_at < ?').bind(ago(90 * 864e5)),
+      env.DB.prepare('DELETE FROM rides WHERE starts_at < ?').bind(ago(90 * 864e5)),
     ]);
   },
 };
@@ -287,7 +288,7 @@ add('POST', '/api/recover', async ({ env, request, body }) => {
 
 async function badgeCounts(env, user) {
   const n = await first(env, 'SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL', user.id);
-  let messages = 0, approvals = 0;
+  let messages = 0, approvals = 0, rides = 0;
   if (user.role === 'kid') {
     const m = await first(env,
       `SELECT COUNT(*) AS n FROM messages m JOIN friendships f ON f.id = m.friendship_id
@@ -304,9 +305,16 @@ async function badgeCounts(env, user) {
                   AND NOT EXISTS (SELECT 1 FROM plan_members d WHERE d.plan_id = p.id AND d.parent_status = 'declined')) AS n`,
       user.family_id, ago(3600e3));
     approvals = a.n;
+    const rd = await first(env,
+      `SELECT COUNT(*) AS n FROM rides r WHERE r.status = 'open' AND r.starts_at > ?2
+          AND EXISTS (SELECT 1 FROM ride_riders x JOIN users k ON k.id = x.kid_id WHERE x.ride_id = r.id AND k.family_id = ?1)`,
+      user.family_id, ago(15 * 60e3));
+    rides = rd.n;
   }
   const fm = await first(env, 'SELECT COUNT(*) AS n FROM family_messages WHERE to_id = ? AND read_at IS NULL', user.id);
-  return { notifications: n.n, messages, approvals, family_messages: fm.n };
+  // Newest notification — the app plays a sound when this id goes up.
+  const latest = await first(env, 'SELECT id, type FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', user.id);
+  return { notifications: n.n, messages, approvals, rides, family_messages: fm.n, latest_id: latest?.id || 0, latest_type: latest?.type || null };
 }
 
 add('GET', '/api/me', async ({ env, user }) => {
@@ -880,6 +888,120 @@ add('POST', '/api/sms/inbound', async ({ env, request, url }) => {
   }
   return twiml("Open the Let's Hang app to approve plans and see alerts.");
 }, { auth: false, raw: true });
+
+// ================================================================ rides (rain/snow pickup + drop-off requests)
+const RIDE_REASONS = { rain: '🌧️ Rain', snow: '🌨️ Snow', storm: '⛈️ Storms', cold: '🥶 Freezing', other: '🚗' };
+const rideKind = (k) => (k === 'dropoff' ? 'drop-off' : 'pickup');
+
+/** Rides this user can see: kids — rides they ride in; parents — rides with any of their kids. */
+async function ridesFor(env, user, rideId = null) {
+  const scope = user.role === 'kid'
+    ? 'EXISTS (SELECT 1 FROM ride_riders x WHERE x.ride_id = r.id AND x.kid_id = ?1)'
+    : 'EXISTS (SELECT 1 FROM ride_riders x JOIN users k ON k.id = x.kid_id WHERE x.ride_id = r.id AND k.family_id = ?1)';
+  const rows = await all(env,
+    `SELECT r.*, q.display_name AS requested_by_name, c.display_name AS claimed_by_name, c.phone AS claimed_by_phone
+       FROM rides r JOIN users q ON q.id = r.requested_by LEFT JOIN users c ON c.id = r.claimed_by
+      WHERE ${scope} AND ${rideId ? 'r.id = ?3' : "r.status != 'cancelled' AND r.starts_at > ?2"}
+      ORDER BY r.starts_at LIMIT 30`,
+    ...[user.role === 'kid' ? user.id : user.family_id, ago(3 * 3600e3), ...(rideId ? [rideId] : [])]);
+  if (!rows.length) return [];
+  const riders = await all(env,
+    `SELECT x.ride_id, u.id, u.display_name, u.avatar, u.family_id FROM ride_riders x JOIN users u ON u.id = x.kid_id
+      WHERE x.ride_id IN (${rows.map(() => '?').join(',')})`, ...rows.map((r) => r.id));
+  return rows.map((r) => {
+    const rs = riders.filter((x) => x.ride_id === r.id);
+    return {
+      id: r.id, kind: r.kind, reason: r.reason, starts_at: r.starts_at, from_place: r.from_place, to_place: r.to_place, note: r.note,
+      status: r.status, requested_by: r.requested_by, requested_by_name: r.requested_by_name,
+      claimed_by: r.claimed_by, claimed_by_name: r.claimed_by_name, claimed_at: r.claimed_at,
+      // Only the families riding see the driver's number.
+      claimed_by_phone: r.claimed_by_phone || null,
+      riders: rs.map(({ id, display_name, avatar }) => ({ id, display_name, avatar })),
+      my_kids: user.role === 'parent' ? rs.filter((x) => x.family_id === user.family_id).map((x) => x.id) : [],
+    };
+  });
+}
+/** Every rider plus every rider's parents (optionally minus one user). */
+async function rideAudience(env, ride, exceptId) {
+  const kids = await usersById(env, ride.riders.map((k) => k.id));
+  const fams = [...new Set(kids.map((k) => k.family_id))];
+  const parents = (await Promise.all(fams.map((f) => parentsOf(env, f)))).flat();
+  return { kids: kids.filter((k) => k.id !== exceptId), parents: parents.filter((p) => p.id !== exceptId) };
+}
+
+add('GET', '/api/rides', async ({ env, user }) => json({ rides: await ridesFor(env, user) }));
+
+add('POST', '/api/rides', async ({ env, ctx, user, body }) => {
+  const kind = body.kind === 'dropoff' ? 'dropoff' : body.kind === 'pickup' ? 'pickup' : fail(400, 'Pick pickup or drop-off');
+  const reason = Object.hasOwn(RIDE_REASONS, body.reason) ? body.reason : 'other';
+  const starts = new Date(body.starts_at || '');
+  if (isNaN(starts)) fail(400, 'Pick a time');
+  if (starts < new Date(Date.now() - 15 * 60e3)) fail(400, "That time already passed — pick a time that's coming up");
+  if (starts > new Date(Date.now() + 7 * 864e5)) fail(400, 'Rides can be asked for up to a week ahead');
+  const from = str(body.from_place, 80), to = str(body.to_place, 80), note = str(body.note, 160) || null;
+  if (!from || !to) fail(400, 'Say where from and where to');
+  if ([from, to, note].some((t) => t && moderate(t))) fail(422, "For safety, don't put phone numbers, street addresses or links in a ride request — say \"school\" or \"the Lee house\".");
+  const friendIds = [...new Set((Array.isArray(body.friend_ids) ? body.friend_ids : []).map(toInt).filter((x) => x && x !== user.id))].slice(0, 6);
+  for (const fid of friendIds) {
+    const [a, b] = pair(user.id, fid);
+    if (!(await first(env, `SELECT id FROM friendships WHERE kid_a = ? AND kid_b = ? AND status = 'active'`, a, b))) fail(403, 'You can only add approved friends to a ride');
+    if (await isBlocked(env, user.id, fid)) fail(403, 'You can only add approved friends to a ride');
+  }
+  await rateLimit(env, 'ride:' + user.id, 10, 864e5, "That's a lot of ride requests today — ask a parent directly.");
+  const row = await first(env, 'INSERT INTO rides (requested_by, kind, reason, starts_at, from_place, to_place, note) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
+    user.id, kind, reason, starts.toISOString(), from, to, note);
+  await env.DB.batch([user.id, ...friendIds].map((k) => env.DB.prepare('INSERT INTO ride_riders (ride_id, kid_id) VALUES (?, ?)').bind(row.id, k)));
+  const [ride] = await ridesFor(env, user, row.id);
+  const { kids, parents } = await rideAudience(env, ride, user.id);
+  const names = ride.riders.map((k) => firstName(k.display_name)).join(', ');
+  const whenTxt = when(env, ride.starts_at);
+  await notify(env, ctx, parents, {
+    type: 'ride', title: `${RIDE_REASONS[reason]} — ${rideKind(kind)} needed`,
+    body: `${names} · ${from} → ${to} · ${whenTxt}. Open Let's Hang and tap "I've got it" if you can drive.`, link: 'rides',
+  }, { sms: true });
+  await notify(env, ctx, kids, { type: 'ride_update', title: `${firstName(user.display_name)} asked for a ride for you too`, body: `${rideKind(kind)} · ${from} → ${to} · ${whenTxt}`, link: 'rides' });
+  return json({ ok: true, id: row.id, parents_asked: parents.length });
+}, { role: 'kid' });
+
+add('POST', '/api/rides/:id/claim', async ({ env, ctx, user, params }) => {
+  const [ride] = await ridesFor(env, user, toInt(params.id));
+  if (!ride) fail(404, 'Ride not found');
+  if (!ride.my_kids.length) fail(403, 'Only parents of kids in this ride can drive it');
+  if (ride.status === 'cancelled') fail(400, 'This ride was cancelled');
+  // Atomic: only one parent can win the claim.
+  const r = await run(env, `UPDATE rides SET status = 'claimed', claimed_by = ?, claimed_at = ? WHERE id = ? AND status = 'open'`, user.id, nowIso(), ride.id);
+  if (!r.meta.changes) fail(409, `${ride.claimed_by_name ? firstName(ride.claimed_by_name) : 'Another parent'} already has this one 👍`);
+  const { kids, parents } = await rideAudience(env, ride, user.id);
+  const msg = { type: 'ride_update', title: `🚗 ${user.display_name} is driving!`, body: `${rideKind(ride.kind)} · ${ride.from_place} → ${ride.to_place} · ${when(env, ride.starts_at)}`, link: 'rides' };
+  await notify(env, ctx, kids, msg);
+  await notify(env, ctx, parents, msg, { sms: true });
+  return json({ ok: true });
+}, { role: 'parent' });
+
+add('POST', '/api/rides/:id/unclaim', async ({ env, ctx, user, params }) => {
+  const [ride] = await ridesFor(env, user, toInt(params.id));
+  if (!ride) fail(404, 'Ride not found');
+  if (ride.claimed_by !== user.id || ride.status !== 'claimed') fail(403, "You're not the driver for this ride");
+  await run(env, `UPDATE rides SET status = 'open', claimed_by = NULL, claimed_at = NULL WHERE id = ?`, ride.id);
+  const { kids, parents } = await rideAudience(env, ride, user.id);
+  await notify(env, ctx, parents, { type: 'ride', title: `⚠️ Still need a driver`, body: `${firstName(user.display_name)} can't make the ${rideKind(ride.kind)} (${ride.from_place} → ${ride.to_place} · ${when(env, ride.starts_at)}). Can you?`, link: 'rides' }, { sms: true });
+  await notify(env, ctx, kids, { type: 'ride_update', title: 'Your ride needs a new driver', body: 'Parents have been asked again.', link: 'rides' });
+  return json({ ok: true });
+}, { role: 'parent' });
+
+add('POST', '/api/rides/:id/cancel', async ({ env, ctx, user, params }) => {
+  const [ride] = await ridesFor(env, user, toInt(params.id));
+  if (!ride) fail(404, 'Ride not found');
+  // The kid who asked, or a parent of any rider.
+  if (user.role === 'kid' ? ride.requested_by !== user.id : !ride.my_kids.length) fail(403, 'Only the kid who asked (or a parent) can cancel');
+  if (ride.status === 'cancelled') return json({ ok: true });
+  await run(env, `UPDATE rides SET status = 'cancelled' WHERE id = ?`, ride.id);
+  const { kids, parents } = await rideAudience(env, ride, user.id);
+  const msg = { type: 'ride_update', title: 'Ride cancelled', body: `${firstName(user.display_name)} cancelled the ${rideKind(ride.kind)} · ${when(env, ride.starts_at)}`, link: 'rides' };
+  await notify(env, ctx, kids, msg);
+  await notify(env, ctx, parents, msg, { sms: ride.status === 'claimed' });
+  return json({ ok: true });
+});
 
 // ================================================================ hang houses, check-in/out, pickup heads-ups
 const SESSION_LABEL = { before: 'before school', after: 'after school', other: '' };

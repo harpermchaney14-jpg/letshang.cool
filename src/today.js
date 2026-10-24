@@ -68,15 +68,25 @@ function wearTip(w) {
   if (w.wind >= 20) t.push(`Windy (${w.wind} mph) 💨`);
   return t.join(' · ');
 }
+/** 'snow' | 'rain' | 'storm' | 'cold' when walking is a bad idea and a ride makes sense, else null. */
+export function rideReason(w) {
+  if (!w) return null;
+  const c = w.code;
+  if (c >= 95) return 'storm';
+  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return 'snow';
+  if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82) || w.pop >= 50) return 'rain';
+  if (w.feels <= 5) return 'cold';
+  return null;
+}
 function hourAt(h, date, hhmm) {
   const m = toMin(hhmm) + 30;
   const i = h.time.indexOf(`${date}T${String(Math.min(23, Math.floor(m / 60))).padStart(2, '0')}:00`);
   if (i < 0) return null;
   const w = { temp: Math.round(h.temperature_2m[i]), feels: Math.round(h.apparent_temperature[i]), pop: h.precipitation_probability?.[i] ?? 0, wind: Math.round(h.wind_speed_10m[i]), code: h.weather_code[i] };
   const [emoji, text] = describe(w.code);
-  return { ...w, emoji, text, tip: wearTip(w) };
+  return { ...w, emoji, text, tip: wearTip(w), ride: rideReason(w) };
 }
-const mk = (temp, feels, pop, wind, code) => { const w = { temp, feels, pop, wind, code }; const [emoji, text] = describe(code); return { ...w, emoji, text, tip: wearTip(w) }; };
+const mk = (temp, feels, pop, wind, code) => { const w = { temp, feels, pop, wind, code }; const [emoji, text] = describe(code); return { ...w, emoji, text, tip: wearTip(w), ride: rideReason(w) }; };
 
 export async function walkWeather(env, ctx, fam, day, sched) {
   if (env.WEATHER_MOCK) return { morning: mk(41, 35, 10, 12, 2), afternoon: mk(56, 56, 60, 22, 80) }; // local dev only

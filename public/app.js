@@ -118,6 +118,92 @@
     return `<div class="panel stack"><h3>My style</h3><p class="small muted">Only changes how the app looks for you.</p>
       <div class="style-grid">${opt('neon', 'Neon', 'Graffiti + glow', ['#ff16c7', '#00eaff', '#ffd400', '#12002a'])}${opt('pastel', 'Pastel', 'Soft + dreamy', ['#d9c8ff', '#d6e4cb', '#ffc8de', '#c6e6ff'])}</div></div>`;
   }
+  // ================================================================ sounds
+  // Little synthesized tunes (no audio files). iPhones only allow sound after the first tap,
+  // so the audio engine is unlocked on the first touch anywhere in the app.
+  const Sound = (() => {
+    let ctx = null;
+    const on = () => store.get('lh_sound', true) !== false;
+    function engine() {
+      if (!ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; ctx = new AC(); }
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      return ctx;
+    }
+    function unlock() {
+      const c = engine(); if (!c) return;
+      const b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0);
+    }
+    ['touchend', 'pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, unlock, { passive: true }));
+    // note: [frequency Hz, start s, length s, voice, volume, slide-to Hz]
+    // voices: any oscillator wave, plus 'pluck' (guitar-ish) and 'bell' (glassy, with an overtone)
+    function osc(c, type, f, t, len, vol, toF) {
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = type; o.frequency.setValueAtTime(f, t);
+      if (toF) o.frequency.exponentialRampToValueAtTime(toF, t + len);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      o.connect(g).connect(c.destination); o.start(t); o.stop(t + len + 0.05);
+    }
+    function tune(notes) {
+      const c = engine(); if (!c) return;
+      const t0 = c.currentTime + 0.02;
+      for (const [f, at, len, voice = 'sine', vol = 0.25, toF] of notes) {
+        const t = t0 + at;
+        if (voice === 'pluck') { osc(c, 'triangle', f, t, len, vol); osc(c, 'sine', f * 2, t, len * 0.6, vol * 0.35); }
+        else if (voice === 'bell') { osc(c, 'sine', f, t, len, vol); osc(c, 'sine', f * 2.76, t, len * 0.5, vol * 0.18); osc(c, 'sine', f * 5.4, t, len * 0.25, vol * 0.06); }
+        else osc(c, voice, f, t, len, vol, toF);
+      }
+    }
+    const sparkle = (at) => [[2637, at, 0.25, 'bell', 0.05], [3136, at + 0.06, 0.3, 'bell', 0.04], [3951, at + 0.12, 0.35, 'bell', 0.03]];
+    const SQ = 'square', V = 0.2; // 8-bit squares are loud — keep them low
+    const TUNES = {
+      // NEON — 8-bit arcade
+      neon: {
+        message: [[988, 0, 0.06, SQ, V], [1319, 0.06, 0.1, SQ, V]],                                              // blip-blip
+        ready:   [523, 659, 784, 1047, 1319, 1568, 2093].map((f, i) => [f, i * 0.045, 0.08, SQ, V]),           // power-up!
+        pickup:  [[880, 0, 0.09, SQ, V], [880, 0.14, 0.09, SQ, V], [1175, 0.28, 0.22, SQ, V, 1760]],            // bleep bleep bwoop
+        checkin: [[392, 0, 0.18, SQ, V, 1568], [1568, 0.17, 0.1, SQ, V]],                                      // zip-in
+        approve: [[784, 0, 0.09, SQ, V], [1047, 0.1, 0.09, SQ, V], [1319, 0.2, 0.09, SQ, V], [1568, 0.3, 0.32, SQ, V], [784, 0.3, 0.32, 'triangle', 0.15]], // level clear
+        safety:  [[330, 0, 0.18, 'sawtooth', 0.2], [247, 0.2, 0.18, 'sawtooth', 0.2], [330, 0.4, 0.18, 'sawtooth', 0.2], [247, 0.6, 0.3, 'sawtooth', 0.2]],
+        chime:   [[1319, 0, 0.06, SQ, V], [1760, 0.07, 0.12, SQ, V]],
+      },
+      // PASTEL — sparkly pop: plucks, glassy bells, dreamy chords
+      pastel: {
+        message: [[659, 0, 0.35, 'pluck', 0.22], [988, 0.09, 0.5, 'pluck', 0.2], ...sparkle(0.12)],
+        ready:   [[523, 0, 1.1, 'pluck', 0.16], [659, 0.05, 1.1, 'pluck', 0.15], [784, 0.1, 1.1, 'pluck', 0.15], [988, 0.15, 1.2, 'pluck', 0.14], [1319, 0.3, 0.9, 'bell', 0.12], ...sparkle(0.35)], // dreamy strum
+        pickup:  [[1760, 0, 0.7, 'bell', 0.16], [1760, 0.32, 0.9, 'bell', 0.16], [1319, 0.32, 0.9, 'bell', 0.08]], // ding… ding
+        checkin: [[392, 0, 0.6, 'pluck', 0.18], [494, 0.08, 0.6, 'pluck', 0.17], [587, 0.16, 0.6, 'pluck', 0.17], [784, 0.24, 0.8, 'pluck', 0.17], ...sparkle(0.3)],
+        approve: [[698, 0, 0.9, 'bell', 0.15], [880, 0.1, 0.9, 'bell', 0.14], [1047, 0.2, 0.9, 'bell', 0.13], [1319, 0.3, 1.1, 'bell', 0.13], ...sparkle(0.4)],
+        safety:  [[880, 0, 0.35, 'bell', 0.2], [698, 0.25, 0.45, 'bell', 0.2], [880, 0.6, 0.35, 'bell', 0.2], [698, 0.85, 0.5, 'bell', 0.2]],
+        chime:   [[1319, 0, 0.6, 'bell', 0.15], [1976, 0.1, 0.7, 'bell', 0.1], ...sparkle(0.15)],
+      },
+    };
+    const KIND = { message: 'message', parent_message: 'message', ready: 'ready', pickup: 'pickup', checkin: 'checkin', ride: 'pickup', ride_update: 'approve',
+      friend_request: 'approve', friend_approval: 'approve', friend_accepted: 'approve', plan_approval: 'approve', plan_update: 'approve', safety: 'safety' };
+    return {
+      on, kindFor: (type) => KIND[type] || 'chime',
+      play(kind, force) { if (!force && !on()) return; const set = TUNES[theme()] || TUNES.neon; try { tune(set[kind] || set.chime); } catch { /* audio blocked */ } },
+      set(v) { store.set('lh_sound', !!v); },
+    };
+  })();
+  // Compare fresh badge counts with what we've already heard; play one sound for anything new.
+  let heard = null;
+  function soundCheck(b) {
+    if (!b) return;
+    const now = { id: b.latest_id || 0, msgs: (b.messages || 0) + (b.family_messages || 0) };
+    if (heard && S.me) {
+      if (now.id > heard.id) Sound.play(Sound.kindFor(b.latest_type));
+      else if (now.msgs > heard.msgs) Sound.play('message');
+    }
+    heard = now;
+  }
+  function soundPanel() {
+    return `<div class="panel stack"><h3>🔊 Sounds</h3>
+      <label class="switch-row"><span>Play a sound for new notifications</span><input type="checkbox" role="switch" data-act="sound-toggle" ${Sound.on() ? 'checked' : ''}></label>
+      <div class="row wrap">${[['message', '💬'], ['pickup', '🚗'], ['ready', '🙋'], ['approve', '✅']].map(([k, e]) => `<button type="button" class="ghost-button sm" data-act="sound-test" data-k="${k}">${e} Test</button>`).join('')}</div>
+      <p class="small muted">${theme() === 'pastel' ? 'Pastel = sparkly pop sounds ✨' : 'Neon = arcade sounds 🕹️'} — they switch with your style. Sounds play while Let's Hang is open. Turn your ringer on (the side switch) and turn the volume up.</p></div>`;
+  }
   const isKid = () => S.me?.role === 'kid';
   const parents = () => S.family.filter((u) => u.role === 'parent');
 
@@ -132,6 +218,7 @@
     if (k === 'family') return open('family', Number(id));
     if (k === 'kid') return isKid() ? false : (S.tab = 'home', open('kid', Number(id)));
     if (k === 'friends') return go(isKid() ? 'friends' : 'approvals');
+    if (k === 'rides') return open('rides');
     if (k === 'plans') return isKid() ? (S.tab = 'home', open('plans')) : go('calendar');
     if (k === 'approvals') return go('approvals');
     if (k === 'home') return go('home');
@@ -147,12 +234,13 @@
       else if (v === 'notifications') S.notes = (await api('/notifications')).notifications;
       else if (v === 'plans') [S.plans, S.friends] = await Promise.all([api('/plans').then((d) => d.plans), api('/friends')]);
       else if (v === 'walk') S.today = await api('/today');
+      else if (v === 'rides') S.rides = (await api('/rides')).rides;
       else if (isKid()) {
-        if (S.tab === 'home') [S.plans, S.hang, S.today] = await Promise.all([api('/plans').then((d) => d.plans), api('/hangout'), api('/today')]);
+        if (S.tab === 'home') [S.plans, S.hang, S.today, S.rides] = await Promise.all([api('/plans').then((d) => d.plans), api('/hangout'), api('/today'), api('/rides').then((d) => d.rides)]);
         if (S.tab === 'chat') S.chats = (await api('/chats')).chats;
         if (S.tab === 'friends') S.friends = await api('/friends');
       } else {
-        if (S.tab === 'home') [S.dash, S.hang, S.today] = await Promise.all([api('/dashboard'), api('/hangout'), api('/today')]);
+        if (S.tab === 'home') [S.dash, S.hang, S.today, S.rides] = await Promise.all([api('/dashboard'), api('/hangout'), api('/today'), api('/rides').then((d) => d.rides)]);
         if (S.tab === 'approvals' || S.tab === 'calendar') S.dash = await api('/dashboard');
         if (S.tab === 'alerts') S.notes = (await api('/notifications')).notifications;
         if (S.tab === 'account') [S.hang, S.today] = await Promise.all([api('/hangout'), api('/today')]);
@@ -170,6 +258,7 @@
       if (document.hidden || !S.me) return;
       try {
         const b = await api('/badges');
+        soundCheck(b);
         const changed = JSON.stringify(b) !== JSON.stringify(S.badges);
         S.badges = b; paintBadges();
         if (changed && !document.activeElement?.matches('input, textarea, select') && !$('#modal-root').innerHTML && S.view?.name !== 'conv') loadForScreen();
@@ -233,6 +322,7 @@
     if (v === 'plans') return viewPlans();
     if (v === 'kid') return viewParentKid();
     if (v === 'walk') return viewWalk();
+    if (v === 'rides') return viewRides();
     if (isKid()) return ({ home: kidHome, chat: kidChats, friends: kidFriends, games: kidGames, profile: kidProfile })[S.tab]();
     return ({ home: parentHome, approvals: parentApprovals, calendar: parentCalendar, alerts: viewNotifications, account: parentAccount })[S.tab]();
   }
@@ -408,7 +498,8 @@
       <div class="subway panel" aria-label="School day timeline"><span class="line" aria-hidden="true"></span>
         ${[[s.leave, 'Leave'], [s.arrive, 'Arrive'], [s.start, 'Bell'], [s.end, 'Out'], [s.home, 'Home']].map(([x, l]) => `<div class="stop"><b>${hm(x)}</b><i></i><span>${l}</span></div>`).join('')}
       </div>
-      <p class="walk-note">${s.walk_miles} mi walk ≈ ${s.walk_minutes} min${isKid() ? '' : ' · change times in Account → School day'}</p>`;
+      <p class="walk-note">${s.walk_miles} mi walk ≈ ${s.walk_minutes} min${isKid() ? '' : ' · change times in Account → School day'}</p>
+      ${isKid() ? '<button class="warm-button block big" data-act="ride-sheet">🚗 Ask for a ride</button>' : '<button class="ghost-button block" data-act="open" data-view="rides">🚗 Ride requests</button>'}`;
   }
 
   // ================================================================ KID: home
@@ -420,6 +511,7 @@
     const p0 = parents()[0];
     return `${heroHTML(S.hang?.stay ? `You're at ${esc(S.hang.stay.house_name)}` : 'Real friends. Good vibes. Your space.')}
       ${pickupBanners(S.hang?.pickups)}
+      ${rideBanners()}
       ${b.family_messages && p0 ? `<button class="motivation-banner tone-pink" data-act="open" data-view="family" data-id="${p0.id}"><p class="motivation-copy">Message from ${esc(first(p0.display_name))}<span class="mb-sub">Tap to read</span></p><span class="mb-emoji" aria-hidden="true">💌</span></button>` : ''}
       <button class="ready-button ${lastReady ? 'sent' : ''}" data-act="ready" ${lastReady ? 'aria-disabled="true"' : ''}>
         <span class="rb-main">${lastReady ? 'Parent notified ✓' : "I'm Ready!"}</span>
@@ -455,7 +547,9 @@
     if (!v) return;
     if (v.name === 'family') {
       const d = await api(`/family-chat/${v.id}`).catch(() => null);
-      if (d && JSON.stringify(d.messages) !== JSON.stringify(S.fam?.messages)) { S.fam = d; if (!full) { const m = $('#msgs'); if (m) { m.innerHTML = famMsgs(); scrollChat(); } } }
+      if (d && JSON.stringify(d.messages) !== JSON.stringify(S.fam?.messages)) {
+        if (!full && S.fam?.messages && d.messages.length > S.fam.messages.length && d.messages[d.messages.length - 1].from_id !== S.me.id) Sound.play('message');
+        S.fam = d; if (!full) { const m = $('#msgs'); if (m) { m.innerHTML = famMsgs(); scrollChat(); } } }
       return;
     }
     const lastId = !full && S.conv?.id === v.id && S.conv.messages.length ? S.conv.messages[S.conv.messages.length - 1].id : 0;
@@ -463,6 +557,7 @@
     if (!d) return;
     if (lastId) {
       if (!d.messages.length) return;
+      if (d.messages.some((m) => m.sender_id !== S.me.id)) Sound.play('message');
       S.conv.messages = S.conv.messages.concat(d.messages);
       const m = $('#msgs'); if (m) { m.innerHTML = convMsgs(); scrollChat(); }
     } else S.conv = { id: v.id, ...d };
@@ -660,6 +755,7 @@
     const tog = (k, label) => `<label class="switch-row"><span>${label}</span><input type="checkbox" role="switch" data-act="pref" data-k="${k}" ${p[k] !== false ? 'checked' : ''}></label>`;
     return `${subHeader('Settings')}
       ${stylePicker()}
+      ${soundPanel()}
       <div class="panel stack"><h3>Notifications</h3>${tog('messages', 'New messages')}${tog('friends', 'Friend requests')}${tog('plans', 'Plan updates')}</div>
       <div class="panel stack tone-pink"><h3>Safety</h3>
         <p class="small">If anyone makes you feel uncomfortable: <b>Block</b> or <b>Report</b> them from the chat ⋯ menu, and tell a parent.</p>
@@ -757,12 +853,100 @@
     </form>`);
   }
 
+  // ================================================================ rides (rain/snow pickup + drop-off)
+  const RIDE_EM = { rain: '🌧️', snow: '🌨️', storm: '⛈️', cold: '🥶', other: '🚗' };
+  const RIDE_WORD = { rain: 'Rain', snow: 'Snow', storm: 'Storms', cold: 'Freezing cold', other: '' };
+  const rideKindTxt = (k) => (k === 'dropoff' ? 'Drop-off' : 'Pickup');
+  /** What today's forecast suggests: { kind, reason, when } or null. */
+  function rideHint() {
+    const t = S.today; if (!t?.weather) return null;
+    const now = new Date(), today = t.day.date === localDate(now);
+    const mins = now.getHours() * 60 + now.getMinutes(), toM = (x) => { const [h, m] = x.split(':').map(Number); return h * 60 + m; };
+    const am = t.weather.morning, pm = t.weather.afternoon;
+    if (am?.ride && (!today || mins < toM(t.schedule.leave))) return { kind: 'dropoff', reason: am.ride, w: am, time: t.schedule.leave };
+    if (pm?.ride && (!today || mins < toM(t.schedule.end) + 30)) return { kind: 'pickup', reason: pm.ride, w: pm, time: t.schedule.end };
+    return null;
+  }
+  function rideCard(r) {
+    const mine = isKid() && r.requested_by === S.me.id, myKids = !isKid() && r.my_kids.length;
+    const driving = r.status === 'claimed' && r.claimed_by === S.me.id;
+    const pill = r.status === 'claimed' ? `<span class="pill st-approved">🚗 ${driving ? "You're driving" : `${esc(first(r.claimed_by_name))} is driving`}</span>`
+      : r.status === 'cancelled' ? '<span class="pill st-declined">Cancelled</span>' : '<span class="pill st-waiting">⏳ Needs a driver</span>';
+    return `<div class="panel ride-card stack-sm ${r.status === 'open' ? 'tone-yellow' : ''}">
+      <div class="row"><span class="ride-em" aria-hidden="true">${RIDE_EM[r.reason] || '🚗'}</span><div class="grow">
+        <h3>${rideKindTxt(r.kind)} · ${whenText(r.starts_at)}</h3>
+        <p class="small">${esc(r.from_place)} → ${esc(r.to_place)}</p></div></div>
+      <div class="row wrap small-gap">${pill}${RIDE_WORD[r.reason] ? `<span class="pill">${RIDE_EM[r.reason]} ${RIDE_WORD[r.reason]}</span>` : ''}</div>
+      <p class="small">Riders: ${r.riders.map((k) => `${AVATAR[k.avatar]?.[0] || ''} ${esc(first(k.display_name))}`).join(', ')} <span class="muted">· asked by ${esc(first(r.requested_by_name))}</span></p>
+      ${r.note ? `<p class="small muted">“${esc(r.note)}”</p>` : ''}
+      ${r.status === 'claimed' && !driving && r.claimed_by_phone && !isKid() ? `<a class="ghost-button sm" href="sms:${esc(r.claimed_by_phone)}">📱 Text ${esc(first(r.claimed_by_name))}</a>` : ''}
+      ${r.status === 'cancelled' ? '' : `<div class="row wrap">
+        ${myKids && r.status === 'open' ? `<button class="warm-button" data-act="ride-claim" data-id="${r.id}">🚗 I've got it!</button>` : ''}
+        ${driving ? `<button class="ghost-button sm" data-act="ride-unclaim" data-id="${r.id}">Can't make it</button>` : ''}
+        ${mine || myKids ? `<button class="ghost-button sm" data-act="ride-cancel" data-id="${r.id}">Cancel ride</button>` : ''}</div>`}
+    </div>`;
+  }
+  /** Home-screen banners: rides in progress first, else a weather nudge (kids). */
+  function rideBanners() {
+    const rides = (S.rides || []).filter((r) => r.status !== 'cancelled');
+    if (rides.length) {
+      if (isKid()) return rides.slice(0, 2).map((r) => `<button class="motivation-banner ${r.status === 'claimed' ? 'tone-green' : 'tone-yellow'}" data-act="open" data-view="rides">
+        <p class="motivation-copy">${r.status === 'claimed' ? `${esc(first(r.claimed_by_name))} is driving!` : 'Asking parents for a ride…'}<span class="mb-sub">${rideKindTxt(r.kind)} · ${whenText(r.starts_at)} · ${esc(r.from_place)} → ${esc(r.to_place)}</span></p>
+        <span class="mb-emoji" aria-hidden="true">${r.status === 'claimed' ? '🚗' : '⏳'}</span></button>`).join('');
+      const open = rides.filter((r) => r.status === 'open' && r.my_kids.length);
+      return open.map(rideCard).join('') + rides.filter((r) => r.status === 'claimed').slice(0, 2).map((r) => `<button class="motivation-banner tone-green" data-act="open" data-view="rides">
+        <p class="motivation-copy">${r.claimed_by === S.me.id ? "You're driving" : `${esc(first(r.claimed_by_name))} is driving`}<span class="mb-sub">${rideKindTxt(r.kind)} · ${whenText(r.starts_at)} · ${esc(r.riders.map((k) => first(k.display_name)).join(', '))}</span></p>
+        <span class="mb-emoji" aria-hidden="true">🚗</span></button>`).join('');
+    }
+    const h = isKid() && rideHint();
+    if (!h) return '';
+    return `<button class="motivation-banner tone-blue ride-ask" data-act="ride-sheet" data-kind="${h.kind}" data-reason="${h.reason}">
+      <p class="motivation-copy">${RIDE_WORD[h.reason]} at ${h.kind === 'pickup' ? 'pickup' : 'walk'} time<span class="mb-sub">${h.w.temp}° · ${esc(h.w.text)} · Tap to ask the parents for a ${h.kind === 'pickup' ? 'ride home' : 'ride to school'}</span></p>
+      <span class="mb-emoji" aria-hidden="true">${RIDE_EM[h.reason]}</span></button>`;
+  }
+  function viewRides() {
+    const list = S.rides;
+    return `${subHeader('Rides 🚗', isKid() ? '<button class="warm-button sm" data-act="ride-sheet">+ Ask for a ride</button>' : '')}
+      <p class="note">${isKid() ? "Rain, snow or just too cold? Ask for a pickup or drop-off — every rider's parents get asked, and the first one to say yes drives." : "When the kids ask for a ride, the first parent to tap “I've got it” drives — everyone else gets told."}</p>
+      ${!list ? empty('⏳', 'Loading…') : !list.length ? empty('🚗', 'No rides coming up.', isKid() ? '<button class="primary-button" data-act="ride-sheet" style="margin-top:12px">Ask for a ride</button>' : '') : list.map(rideCard).join('')}`;
+  }
+  async function sheetRide(kind, reason) {
+    if (!S.friends) S.friends = await api('/friends').catch(() => null);
+    if (!S.today) S.today = await api('/today').catch(() => null);
+    const h = rideHint();
+    kind = kind || h?.kind || 'pickup'; reason = reason || h?.reason || 'other';
+    const t = S.today, s = t?.schedule || { end: '15:50', leave: '08:20' };
+    const school = t?.school_name || 'School';
+    const here = S.hang?.stay?.house_name;
+    const date = t?.day?.date || localDate();
+    const fr = S.friends?.friends || [];
+    const pre = (S.hang?.here || []).map((k) => k.id);
+    openSheet(`<form data-form="ride" class="stack"><input type="hidden" name="kind" value="${kind}"><input type="hidden" name="reason" value="${reason}">
+      <h2>Ask for a ride ${RIDE_EM[reason] || '🚗'}</h2>
+      ${h ? `<p class="note">${h.w.emoji} ${esc(h.w.text)} · ${h.w.temp}° (feels ${h.w.feels}°) · 💧 ${h.w.pop}%</p>` : ''}
+      <div class="chips seg" role="radiogroup" aria-label="Pickup or drop-off">
+        <button type="button" class="chip" data-act="ride-kind" data-k="pickup" aria-pressed="${kind === 'pickup'}">🏫→🏠 Pickup</button>
+        <button type="button" class="chip" data-act="ride-kind" data-k="dropoff" aria-pressed="${kind === 'dropoff'}">🏠→🏫 Drop-off</button></div>
+      <div class="row">
+        <label class="fld grow"><span>Day</span><input class="field" type="date" name="date" min="${localDate()}" value="${date}" required></label>
+        <label class="fld grow"><span>Time</span><input class="field" type="time" name="time" value="${kind === 'pickup' ? s.end : s.leave}" required></label></div>
+      <label class="fld"><span>From</span><input class="field" name="from_place" maxlength="80" value="${esc(kind === 'pickup' ? school : here || 'Home')}" required></label>
+      <label class="fld"><span>To</span><input class="field" name="to_place" maxlength="80" value="${esc(kind === 'pickup' ? here || 'Home' : school)}" required></label>
+      ${fr.length ? `<fieldset class="stack-sm"><span>Who else needs the ride?</span>
+        <div class="chips" role="group">${fr.map((f) => `<button type="button" class="chip" data-act="toggle-chip" data-v="${f.kid.id}" aria-pressed="${pre.includes(f.kid.id)}">${AVATAR[f.kid.avatar]?.[0] || ''} ${esc(f.kid.display_name)}</button>`).join('')}</div></fieldset>` : ''}
+      <label class="fld"><span>Note (optional)</span><input class="field" name="note" maxlength="160" placeholder="We'll wait by the front doors"></label>
+      <p class="small muted">Every rider's parents get asked. The first one to say yes drives, and everyone gets told who's coming.</p>
+      <p class="form-error" data-err role="alert"></p>
+      <button class="warm-button block big" type="submit">Ask the parents 🚗</button>
+      <button type="button" class="ghost-button block" data-act="close-sheet">Cancel</button></form>`);
+  }
+
   // ================================================================ notifications
   function viewNotifications() {
     const list = S.notes;
     const head = S.view ? subHeader('Notifications', '<button class="linkish small" data-act="read-all">Mark all read</button>')
       : sectionTitle('Alerts', '<button class="linkish small" data-act="read-all">Mark all read</button>');
-    const icon = { friend_request: '🫶', friend_accepted: '🤝', friend_approval: '✅', message: '💬', plan_approval: '📅', plan_update: '📅', ready: '🙌', parent_message: '💌', safety: '🛡️', checkin: '📍', pickup: '🚗' };
+    const icon = { friend_request: '🫶', friend_accepted: '🤝', friend_approval: '✅', message: '💬', plan_approval: '📅', plan_update: '📅', ready: '🙌', parent_message: '💌', safety: '🛡️', checkin: '📍', pickup: '🚗', ride: '🌧️', ride_update: '🚗' };
     if (!list) return head + empty('⏳', 'Loading…');
     if (!list.length) return head + empty('🔔', "You're all caught up!");
     return head + `<div class="panel list">${list.map((n) => `<button class="row-btn ${n.read_at ? '' : 'unread-row'}" data-act="note" data-id="${n.id}" data-link="${esc(n.link || '')}">
@@ -781,6 +965,7 @@
     const ackedPickup = (id) => h?.pickups.find((p) => p.kid_id === id && p.ack_at && Date.now() - new Date(p.ack_at) < 30 * 60e3);
     return `${heroHTML('Parent dashboard')}
       ${pickupBanners(h?.pickups, true)}
+      ${rideBanners()}
       ${nAppr ? `<button class="motivation-banner tone-yellow" data-act="tab" data-tab="approvals"><p class="motivation-copy">${nAppr} thing${nAppr > 1 ? 's' : ''} need${nAppr > 1 ? '' : 's'} your OK<span class="mb-sub">Friend requests and plans</span></p><span class="mb-emoji" aria-hidden="true">✋</span></button>` : ''}
       <div class="dashboard-grid">
         ${card('plan', 'tab', '✅', 'Approvals', 'data-tab="approvals"', nAppr)}
@@ -865,6 +1050,7 @@
         <div class="row wrap"><button class="primary-button sm" type="submit">Save</button><button type="button" class="ghost-button sm" data-act="sms-test">Send test text</button></div>
       </form>
       ${stylePicker()}
+      ${soundPanel()}
       ${sectionTitle('Our hang house', '<button class="ghost-button sm" data-act="house-edit">+ Add</button>')}
       <div class="panel list">${houses.length ? houses.map((hh) => `<div class="row-btn static"><span class="house-em" style="--house:${houseColor(hh.id)}" aria-hidden="true">${houseEm(hh.id)}</span><span class="grow"><b>${esc(hh.name)}</b><span class="sub">${esc(hh.address || 'No address')}</span></span>
           <button class="ghost-button sm" data-act="house-edit" data-id="${hh.id}">Edit</button></div>`).join('') : '<p class="small muted">Add your home so your kids (and their approved friends) can check in when they hang out there.</p>'}</div>
@@ -1026,7 +1212,7 @@
     try { await fn(); } catch (e) { toast(e.message, 'warn'); }
     finally { S.busy = false; if (el?.isConnected) { el.removeAttribute('aria-busy'); el.classList.remove('is-loading'); } }
   }
-  async function refreshMe() { const d = await api('/me'); S.me = d.user; S.family = d.family; S.badges = d.badges; S.smsLive = d.sms_live; if (S.me.theme && S.me.theme !== theme()) applyTheme(S.me.theme); }
+  async function refreshMe() { const d = await api('/me'); S.me = d.user; S.family = d.family; S.badges = d.badges; soundCheck(d.badges); S.smsLive = d.sms_live; if (S.me.theme && S.me.theme !== theme()) applyTheme(S.me.theme); }
   const setPressed = (el, sel, attr = 'aria-pressed') => $$(sel, el.closest('form') || document).forEach((b) => { b.setAttribute(attr, String(b === el)); if (attr !== 'aria-pressed') b.setAttribute('aria-pressed', String(b === el)); });
 
   const A = {
@@ -1152,6 +1338,19 @@
     },
     'edit-profile': () => sheetEditProfile(),
     'sheet-ava': (el) => { setPressed(el, '.ava-pick', 'aria-checked'); el.closest('form').avatar.value = el.dataset.k; },
+    'ride-sheet': (el) => { closeSheet(); sheetRide(el.dataset.kind, el.dataset.reason); },
+    'ride-kind': (el) => {
+      const f = el.closest('form'), k = el.dataset.k, s = S.today?.schedule || { end: '15:50', leave: '08:20' };
+      if (f.kind.value === k) return;
+      setPressed(el, '[data-act=ride-kind]');
+      f.kind.value = k; f.time.value = k === 'pickup' ? s.end : s.leave;
+      [f.from_place.value, f.to_place.value] = [f.to_place.value, f.from_place.value];
+    },
+    'ride-claim': (el) => withBusy(el, async () => { try { await api(`/rides/${el.dataset.id}/claim`, { method: 'POST' }); confetti(); toast("🚗 You're driving — everyone's been told"); } finally { loadForScreen(); } }),
+    'ride-unclaim': (el) => { if (!confirm("Let the other parents know you can't drive?")) return; withBusy(el, async () => { await api(`/rides/${el.dataset.id}/unclaim`, { method: 'POST' }); toast('Other parents asked again'); loadForScreen(); }); },
+    'ride-cancel': (el) => { if (!confirm('Cancel this ride for everyone?')) return; withBusy(el, async () => { await api(`/rides/${el.dataset.id}/cancel`, { method: 'POST' }); toast('Ride cancelled'); loadForScreen(); }); },
+    'sound-test': (el) => Sound.play(el.dataset.k, true),
+    'sound-toggle': (el) => { Sound.set(el.checked); if (el.checked) Sound.play('chime', true); toast(el.checked ? '🔊 Sounds on' : '🔇 Sounds off'); },
     pref: async (el) => { const p = { ...(S.me.notify_prefs || {}), [el.dataset.k]: el.checked }; S.me.notify_prefs = p; await api('/me', { method: 'PATCH', body: { notify_prefs: p } }).catch((e) => toast(e.message, 'warn')); toast('Saved'); },
     'fam-quick': (el) => { const t = $('#msg-input'); t.value = el.dataset.t; t.form.requestSubmit(); },
 
@@ -1169,7 +1368,7 @@
       await withBusy(el, async () => { await api('/family', { method: 'DELETE', body: { confirm: 'DELETE' } }); S.me = null; stopPolling(); render(); toast('Your family account was deleted.'); });
     },
     'sms-test': (el) => withBusy(el, async () => { const r = await api('/sms/test', { method: 'POST' }); toast(r.status === 'simulated' ? '📝 Logged (practice mode — not actually sent)' : '📱 Test text sent!'); }),
-    logout: async () => { await api('/logout', { method: 'POST' }).catch(() => {}); stopPolling(); S.me = null; S.tab = 'home'; S.view = null; render(); },
+    logout: async () => { await api('/logout', { method: 'POST' }).catch(() => {}); stopPolling(); heard = null; S.me = null; S.tab = 'home'; S.view = null; render(); },
     'close-sheet': () => closeSheet(),
     'close-sheet-bg': (el, e) => { if (e.target === el) closeSheet(); },
   };
@@ -1200,6 +1399,13 @@
       await api('/plans', { method: 'POST', body: { friend_ids, date, time: tm, starts_at: new Date(`${date}T${tm}`).toISOString(), title: d.get('title'), location: d.get('location'), details: d.get('details') } });
       closeSheet(); toast('📅 Sent to parents for approval ⏳');
       if (S.view?.name !== 'plans') open('plans'); else loadForScreen();
+    },
+    ride: async (f, d) => {
+      const friend_ids = $$('[data-act=toggle-chip][aria-pressed=true]', f).map((b) => Number(b.dataset.v));
+      const r = await api('/rides', { method: 'POST', body: { kind: d.get('kind'), reason: d.get('reason'), starts_at: new Date(`${d.get('date')}T${d.get('time')}`).toISOString(),
+        from_place: d.get('from_place'), to_place: d.get('to_place'), note: d.get('note'), friend_ids } });
+      closeSheet(); toast(`🚗 Asked ${r.parents_asked} parent${r.parents_asked === 1 ? '' : 's'} — you'll hear when someone says yes`);
+      loadForScreen();
     },
     checkin: async (f, d) => {
       const kidId = Number(d.get('kid_id'));
