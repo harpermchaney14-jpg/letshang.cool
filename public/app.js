@@ -1245,6 +1245,9 @@
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-act]');
     if (!el || el.tagName === 'INPUT') return;
+    // The sheet backdrop only reacts to taps on itself — taps inside the sheet (submit buttons,
+    // checkboxes, links) must keep their normal behaviour.
+    if (el.dataset.act === 'close-sheet-bg' && e.target !== el) return;
     const fn = A[el.dataset.act];
     if (fn) { e.preventDefault(); fn(el, e); }
   });
