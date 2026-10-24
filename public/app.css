@@ -766,3 +766,10 @@ html[data-theme="pastel"] .style-opt.on { border-color: var(--p-lav-d); box-shad
 body.alert-flash::after { content: ''; position: fixed; inset: 0; z-index: 89; pointer-events: none; box-shadow: inset 0 0 0 6px var(--yellow); animation: edge-flash .9s ease-out 2 forwards; }
 @keyframes edge-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .alert-pop.show { animation: none; } body.alert-flash::after { animation: none; opacity: 0; } }
+
+/* ===== plan confirmations ===== */
+.confirm-list { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 6px; }
+.confirm-list .cf { font-size: 13px; font-weight: 800; }
+.confirm-list .cf-approved { color: var(--green); }
+.confirm-list .cf-declined { color: var(--pink); }
+.confirm-list .cf-waiting { color: var(--yellow); }

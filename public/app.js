@@ -191,7 +191,7 @@
     };
     // Important alerts play more than once so they're hard to miss.
     const REPEAT = { pickup: 3, ready: 2, safety: 3, approve: 2, checkin: 1, message: 2, chime: 1 };
-    const KIND = { message: 'message', parent_message: 'message', ready: 'ready', pickup: 'pickup', checkin: 'checkin', ride: 'pickup', ride_update: 'approve',
+    const KIND = { message: 'message', parent_message: 'message', ready: 'ready', pickup: 'pickup', checkin: 'checkin', ride: 'pickup', ride_update: 'approve', parent_chat: 'message',
       friend_request: 'approve', friend_approval: 'approve', friend_accepted: 'approve', plan_approval: 'approve', plan_update: 'approve', safety: 'safety' };
     return {
       on, kindFor: (type) => KIND[type] || 'chime',
@@ -208,15 +208,15 @@
   let heard = null;
   function soundCheck(b) {
     if (!b) return;
-    const now = { id: b.latest_id || 0, msgs: (b.messages || 0) + (b.family_messages || 0) };
+    const now = { id: b.latest_id || 0, msgs: (b.messages || 0) + (b.family_messages || 0) + (b.parent_messages || 0) };
     if (heard && S.me) {
       if (now.id > heard.id) { Sound.play(Sound.kindFor(b.latest_type)); alertPop(b.latest_type, b.latest_title, b.latest_body, b.latest_link); }
-      else if (now.msgs > heard.msgs && S.view?.name !== 'conv' && S.view?.name !== 'family') { Sound.play('message'); alertPop('message', 'New message 💬', 'Tap to read', isKid() ? 'tab:chat' : null); }
+      else if (now.msgs > heard.msgs && S.view?.name !== 'conv' && S.view?.name !== 'family' && S.view?.name !== 'pconv') { Sound.play('message'); alertPop('message', 'New message 💬', 'Tap to read', isKid() ? 'tab:chat' : null); }
     }
     heard = now;
   }
   // Big drop-down card for new alerts — impossible to miss, even with the ringer off.
-  const POP_EM = { message: '💬', parent_message: '💌', ready: '🙋', pickup: '🚗', ride: '🌧️', ride_update: '🚗', checkin: '📍', safety: '🛡️',
+  const POP_EM = { message: '💬', parent_chat: '💬', parent_message: '💌', ready: '🙋', pickup: '🚗', ride: '🌧️', ride_update: '🚗', checkin: '📍', safety: '🛡️',
     friend_request: '🫶', friend_accepted: '🤝', friend_approval: '✅', plan_approval: '📅', plan_update: '📅' };
   let popTimer = null;
   function alertPop(type, title, body, link) {
@@ -255,6 +255,7 @@
     const [k, id] = link.split(':');
     if (k === 'chat') { S.tab = isKid() ? 'chat' : 'home'; return open('conv', Number(id)); }
     if (k === 'family') return open('family', Number(id));
+    if (k === 'pchat') return isKid() ? false : open('pconv', Number(id));
     if (k === 'kid') return isKid() ? false : (S.tab = 'home', open('kid', Number(id)));
     if (k === 'friends') return go(isKid() ? 'friends' : 'approvals');
     if (k === 'rides') return open('rides');
@@ -269,6 +270,8 @@
     try {
       if (v === 'conv') await loadConv(true);
       else if (v === 'family') S.fam = await api(`/family-chat/${S.view.id}`);
+      else if (v === 'pchats') S.pchats = (await api('/parent-chats')).chats;
+      else if (v === 'pconv') S.pconv = await api(`/parent-chats/${S.view.id}`);
       else if (v === 'kid') { [S.kidView, S.kidChats] = await Promise.all([api(`/kids/${S.view.id}/safety`), api(`/chats?kid_id=${S.view.id}`).then((d) => d.chats)]); }
       else if (v === 'notifications') S.notes = (await api('/notifications')).notifications;
       else if (v === 'plans') [S.plans, S.friends, S.school] = await Promise.all([api('/plans').then((d) => d.plans), api('/friends'), S.school || api('/school-calendar').then((d) => d.days)]);
@@ -303,7 +306,7 @@
         if (changed && !document.activeElement?.matches('input, textarea, select') && !$('#modal-root').innerHTML && S.view?.name !== 'conv') loadForScreen();
       } catch { /* offline blip */ }
     }, 8000);
-    convTimer = setInterval(() => { if (!document.hidden && (S.view?.name === 'conv' || S.view?.name === 'family')) loadConv(false); }, 4000);
+    convTimer = setInterval(() => { if (!document.hidden && (S.view?.name === 'conv' || S.view?.name === 'family' || S.view?.name === 'pconv')) loadConv(false); }, 4000);
   }
   function stopPolling() { clearInterval(pollTimer); clearInterval(convTimer); }
 
@@ -356,6 +359,8 @@
     const v = S.view?.name;
     if (v === 'conv') return viewConversation();
     if (v === 'family') return viewFamilyChat();
+    if (v === 'pchats') return viewParentChats();
+    if (v === 'pconv') return viewParentConv();
     if (v === 'notifications') return viewNotifications();
     if (v === 'settings') return viewKidSettings();
     if (v === 'plans') return viewPlans();
@@ -385,7 +390,7 @@
       <span class="action-icon" aria-hidden="true">${icon}</span>
       <span class="action-label">${label}<span class="action-arrow" aria-hidden="true">→</span></span></button>`;
   const empty = (e, text, btn = '') => `<div class="panel empty"><div class="e" aria-hidden="true">${e}</div><p>${text}</p>${btn}</div>`;
-  const statusPill = (s) => `<span class="pill st-${s}">${{ waiting: '⏳ Waiting', approved: '✅ Approved', declined: '✖ Declined', cancelled: 'Cancelled' }[s]}</span>`;
+  const statusPill = (s) => `<span class="pill st-${s}">${{ waiting: '⏳ Waiting on parents', approved: '✅ Confirmed', declined: '✖ Declined', cancelled: 'Cancelled' }[s]}</span>`;
 
   // ================================================================ sign in
   function renderAuth() {
@@ -612,6 +617,15 @@
   async function loadConv(full) {
     const v = S.view;
     if (!v) return;
+    if (v.name === 'pconv') {
+      const last = S.pconv?.peer?.id === v.id && S.pconv.messages.length ? S.pconv.messages[S.pconv.messages.length - 1].id : 0;
+      const d = await api(`/parent-chats/${v.id}${last ? `?after=${last}` : ''}`).catch(() => null);
+      if (!d || !d.messages.length) return;
+      if (d.messages.some((m) => m.from_id !== S.me.id)) Sound.play('message');
+      S.pconv.messages = S.pconv.messages.concat(d.messages);
+      const m = $('#msgs'); if (m) { m.innerHTML = pMsgs(); scrollChat(); }
+      return;
+    }
     if (v.name === 'family') {
       const d = await api(`/family-chat/${v.id}`).catch(() => null);
       if (d && JSON.stringify(d.messages) !== JSON.stringify(S.fam?.messages)) {
@@ -669,6 +683,60 @@
     if (!f?.messages.length) return `<div class="empty"><div class="e">💌</div><p>No messages yet.</p></div>`;
     return f.messages.map((m) => `<div class="msg ${m.from_id === S.me.id ? 'mine' : 'parent'}"><div class="bubble">${esc(m.body)}</div><div class="time">${ago(m.created_at)}</div></div>`).join('');
   }
+  // ---- parent ↔ parent messages
+  function viewParentChats() {
+    const list = S.pchats;
+    return `${subHeader('Parents 💬')}
+      <p class="note">Message your co-parent and the parents of your kids' approved friends — to set up plans, rides and pickups.</p>
+      ${!list ? empty('⏳', 'Loading…') : !list.length ? empty('🤝', "Once your kid has an approved friend, you can message that friend's parents here.")
+        : `<div class="panel list">${list.map((c) => `<button class="row-btn" data-act="open" data-view="pconv" data-id="${c.id}">${ava(c.avatar)}
+            <span class="grow"><b>${esc(c.display_name)}</b><span class="sub">${c.co_parent ? 'Co-parent' : `${esc(c.kid_names)}'s parent`}${c.last_body ? ` · ${c.last_mine ? 'You: ' : ''}${esc(c.last_body)}` : ''}</span></span>
+            <span class="meta">${c.last_at ? `<span class="tiny">${ago(c.last_at)}</span>` : ''}${c.unread ? `<span class="unread" aria-label="${c.unread} unread">${c.unread}</span>` : ''}</span></button>`).join('')}</div>`}`;
+  }
+  function pMsgs() {
+    const c = S.pconv;
+    if (!c?.messages.length) return `<div class="empty"><div class="e">👋</div><p>Say hi to ${esc(first(c?.peer?.display_name || ''))}!</p></div>`;
+    return c.messages.map((m) => `<div class="msg ${m.from_id === S.me.id ? 'mine' : 'parent'}"><div class="bubble">${esc(m.body)}</div><div class="time">${ago(m.created_at)}</div></div>`).join('');
+  }
+  function viewParentConv() {
+    const c = S.pconv && S.pconv.peer?.id === S.view.id ? S.pconv : null;
+    if (!c) return subHeader('Messages') + empty('⏳', 'Loading…');
+    return `${subHeader(`${ava(c.peer.avatar, 'sm')}<span>${esc(c.peer.display_name)}</span>`)}
+      <p class="note small">${c.peer.co_parent ? 'Your co-parent' : `${esc(c.peer.kid_names)}'s parent`}</p>
+      <div class="quick-row">${['Can you drive today?', "I've got pickup 🚗", 'Sounds good! 👍', 'What time works?'].map((t) => `<button class="chip" data-act="p-quick" data-t="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+      <div class="msgs" id="msgs" aria-live="polite">${pMsgs()}</div>
+      <div class="chat-pad"></div>
+      <form class="composer" data-form="pmsg">
+        <label class="sr" for="msg-input">Message</label>
+        <textarea id="msg-input" class="field" name="body" rows="1" maxlength="1000" placeholder="Message ${esc(first(c.peer.display_name))}…"></textarea>
+        <button class="primary-button" type="submit" aria-label="Send">${I.send}</button>
+      </form>`;
+  }
+  async function sheetParentPlan() {
+    const kids = S.family.filter((u) => u.role === 'kid');
+    if (!kids.length) { toast('Add your kid first'); return; }
+    const lists = await Promise.all(kids.map((k) => api(`/kids/${k.id}/safety`).then((d) => d.friends).catch(() => [])));
+    S.pplan = kids.map((k, i) => ({ kid: k, friends: lists[i] }));
+    const withFriends = S.pplan.filter((x) => x.friends.length);
+    if (!withFriends.length) { toast("Your kid needs an approved friend first", 'warn'); return; }
+    const k0 = withFriends[0];
+    const tomorrow = new Date(Date.now() + 864e5);
+    openSheet(`<form data-form="pplan" class="stack"><input type="hidden" name="kid_id" value="${k0.kid.id}">
+      <h2>Make a plan 📅</h2>
+      ${withFriends.length > 1 ? `<div class="chips seg" role="radiogroup" aria-label="For which kid">${withFriends.map((x, i) => `<button type="button" class="chip" data-act="pplan-kid" data-id="${x.kid.id}" aria-pressed="${i === 0}">${AVATAR[x.kid.avatar]?.[0] || ''} ${esc(x.kid.display_name)}</button>`).join('')}</div>` : `<p class="note">For ${esc(k0.kid.display_name)}</p>`}
+      <fieldset class="stack-sm"><span>With who?</span><div class="chips" role="group" id="pplan-friends">${pplanFriends(k0.kid.id)}</div></fieldset>
+      <div class="row">
+        <label class="fld grow"><span>Date</span><input class="field" type="date" name="date" min="${localDate()}" value="${localDate(tomorrow)}" required></label>
+        <label class="fld grow"><span>Time</span><input class="field" type="time" name="time" value="15:30" required></label></div>
+      <label class="fld"><span>What?</span><input class="field" name="title" maxlength="60" placeholder="Movie night"></label>
+      <label class="fld"><span>Where? (optional)</span><input class="field" name="location" maxlength="80" placeholder="Our house"></label>
+      <label class="fld"><span>Details (optional)</span><textarea class="field" name="details" maxlength="300" placeholder="Pickup at 8pm"></textarea></label>
+      <p class="small muted">You've confirmed it for your kid. The other kids' parents get asked to confirm too.</p>
+      <p class="form-error" data-err role="alert"></p>
+      <button class="warm-button block big" type="submit">Send to the other parents</button>
+      <button type="button" class="ghost-button block" data-act="close-sheet">Cancel</button></form>`);
+  }
+  const pplanFriends = (kidId) => (S.pplan.find((x) => x.kid.id === kidId)?.friends || []).map((f) => `<button type="button" class="chip" data-act="toggle-chip" data-v="${f.kid.id}" aria-pressed="false">${AVATAR[f.kid.avatar]?.[0] || ''} ${esc(f.kid.display_name)}</button>`).join('');
   function viewFamilyChat() {
     const f = S.fam && S.fam.other?.id === S.view.id ? S.fam : null;
     if (!f) return subHeader('Messages') + empty('⏳', 'Loading…');
@@ -901,7 +969,7 @@
     const others = p.members.filter((m) => !(isKid() && m.id === S.me.id));
     const mine = isKid() && p.proposer_id === S.me.id;
     const canCancel = (mine || (!isKid() && p.members.some((m) => m.my_family && m.id === p.proposer_id))) && ['waiting', 'approved'].includes(p.status);
-    const myKidsWaiting = approve ? p.members.filter((m) => m.my_family && m.parent_status === 'waiting') : [];
+    const myKidsWaiting = !isKid() && p.status !== 'cancelled' && new Date(p.starts_at) > new Date() ? p.members.filter((m) => m.my_family && m.parent_status === 'waiting') : [];
     const d = new Date(p.starts_at);
     return `<div class="panel plan-card st-${p.status}">
       <div class="row" style="align-items:flex-start">
@@ -914,9 +982,12 @@
           ${p.details ? `<p class="small muted">${esc(p.details)}</p>` : ''}
         </div>
       </div>
+      ${!isKid() && p.status !== 'cancelled' ? `<div class="confirm-list">${p.members.map((m) => `<span class="cf cf-${m.parent_status}">${m.parent_status === 'approved' ? '✓' : m.parent_status === 'declined' ? '✖' : '⏳'} ${esc(first(m.display_name))}: ${m.parent_status === 'approved' ? `confirmed${m.decided_by_name ? ` by ${esc(m.decided_by_name)}` : ''}` : m.parent_status === 'declined' ? `declined${m.decided_by_name ? ` by ${esc(m.decided_by_name)}` : ''}` : 'waiting on parent'}</span>`).join('')}</div>` : ''}
+      ${p.by_parent ? `<p class="tiny muted">Plan made by ${esc(first(p.proposer_name))} (parent)</p>` : ''}
       ${myKidsWaiting.map((k) => `<div class="approve-row"><span class="small">For <b>${esc(first(k.display_name))}</b>:</span>
-        <button class="primary-button go sm" data-act="plan-decide" data-id="${p.id}" data-kid="${k.id}" data-v="1">Approve</button>
+        <button class="primary-button go sm" data-act="plan-decide" data-id="${p.id}" data-kid="${k.id}" data-v="1">✓ Confirm</button>
         <button class="danger-button sm" data-act="plan-decide" data-id="${p.id}" data-kid="${k.id}" data-v="0">Decline</button></div>`).join('')}
+      ${!isKid() && p.parents?.length && p.status !== 'cancelled' ? `<div class="row wrap small-gap">${p.parents.map((pp) => `<button class="ghost-button sm" data-act="open" data-view="pconv" data-id="${pp.id}">💬 ${esc(first(pp.display_name))}</button>`).join('')}</div>` : ''}
       ${canCancel && !approve ? `<button class="linkish small danger-link" data-act="plan-cancel" data-id="${p.id}">Cancel plan</button>` : ''}
     </div>`;
   }
@@ -1056,7 +1127,7 @@
     const list = S.notes;
     const head = S.view ? subHeader('Notifications', '<button class="linkish small" data-act="read-all">Mark all read</button>')
       : sectionTitle('Alerts', '<button class="linkish small" data-act="read-all">Mark all read</button>');
-    const icon = { friend_request: '🫶', friend_accepted: '🤝', friend_approval: '✅', message: '💬', plan_approval: '📅', plan_update: '📅', ready: '🙌', parent_message: '💌', safety: '🛡️', checkin: '📍', pickup: '🚗', ride: '🌧️', ride_update: '🚗' };
+    const icon = { friend_request: '🫶', friend_accepted: '🤝', friend_approval: '✅', message: '💬', plan_approval: '📅', plan_update: '📅', ready: '🙌', parent_message: '💌', safety: '🛡️', checkin: '📍', pickup: '🚗', ride: '🌧️', ride_update: '🚗', parent_chat: '💬' };
     if (!list) return head + empty('⏳', 'Loading…');
     if (!list.length) return head + empty('🔔', "You're all caught up!");
     return head + `<div class="panel list">${list.map((n) => `<button class="row-btn ${n.read_at ? '' : 'unread-row'}" data-act="note" data-id="${n.id}" data-link="${esc(n.link || '')}">
@@ -1083,6 +1154,8 @@
         ${card('friends', 'tab', '📅', 'Calendar', 'data-tab="calendar"')}
         ${card('games', 'tab', '🔔', 'Alerts', 'data-tab="alerts"', S.badges.notifications)}
         ${card('settings', 'tab', '⚙️', 'Account', 'data-tab="account"')}
+        ${card('chat', 'open', '💬', 'Parents', 'data-view="pchats"', S.badges.parent_messages)}
+        ${card('profile', 'open', '🚗', 'Rides', 'data-view="rides"', S.badges.rides)}
       </div>
       ${walkBanner()}
       ${sectionTitle('Your kids', '<button class="ghost-button sm" data-act="add-kid">+ Add kid</button>')}
@@ -1120,7 +1193,7 @@
   }
   function parentCalendar() {
     if (!S.dash) return sectionTitle('Calendar') + empty('⏳', 'Loading…');
-    return `${sectionTitle('Calendar')}${calendarHTML(S.dash.plans)}${plansLists(S.dash.plans)}${schoolList()}`;
+    return `${sectionTitle('Calendar', '<button class="warm-button sm" data-act="pplan-new">📅 Make a plan</button>')}${calendarHTML(S.dash.plans)}${plansLists(S.dash.plans)}${schoolList()}`;
   }
   function viewParentKid() {
     const v = S.kidView;
@@ -1377,6 +1450,9 @@
     }),
     headsup: (el) => sheetHeadsUp(Number(el.dataset.id)),
     'host-checkin': () => sheetHostCheckin(),
+    'pplan-new': () => sheetParentPlan(),
+    'pplan-kid': (el) => { setPressed(el, '[data-act=pplan-kid]'); const f = el.closest('form'); f.kid_id.value = el.dataset.id; $('#pplan-friends').innerHTML = pplanFriends(Number(el.dataset.id)); },
+    'p-quick': (el) => { const t = $('#msg-input'); if (t) { t.value = el.dataset.t; t.form.requestSubmit(); } },
     'host-house': (el) => { setPressed(el, '[data-act=host-house]'); el.closest('form').house_id.value = el.dataset.id; },
     eta: (el) => { S.eta = Number(el.dataset.v); setPressed(el, '[data-act=eta]'); },
     'pickup-ack': (el) => withBusy(el, async () => { await api(`/pickups/${el.dataset.id}/ack`, { method: 'POST' }); toast("👍 Sent! They know you got it."); loadForScreen(); }),
@@ -1412,7 +1488,7 @@
     'plan-new': async (el) => { closeSheet(); if (!S.friends) S.friends = await api('/friends').catch(() => null); sheetPlan(el.dataset.friend ? Number(el.dataset.friend) : null, el.dataset.title || ''); },
     'plan-decide': (el) => withBusy(el, async () => {
       const r = await api(`/plans/${el.dataset.id}/decision`, { method: 'POST', body: { kid_id: Number(el.dataset.kid), approve: el.dataset.v === '1' } });
-      toast(r.status === 'approved' ? "✅ Approved — it's on the calendar" : el.dataset.v === '1' ? '✅ Approved — waiting on the other parent' : 'Declined'); await refreshMe(); loadForScreen();
+      toast(r.status === 'approved' ? "✅ Confirmed by everyone — it's on the calendar" : el.dataset.v === '1' ? '✓ Confirmed — waiting on the other parent' : 'Declined'); await refreshMe(); loadForScreen();
     }),
     'plan-cancel': async (el) => { if (!confirm('Cancel this plan?')) return; await withBusy(el, async () => { await api(`/plans/${el.dataset.id}/cancel`, { method: 'POST' }); toast('Plan cancelled'); loadForScreen(); }); },
     'friend-approve': (el) => withBusy(el, async () => {
@@ -1532,6 +1608,18 @@
         from_place: d.get('from_place'), to_place: d.get('to_place'), note: d.get('note'), friend_ids } });
       closeSheet(); toast(`🚗 Asked ${r.parents_asked} parent${r.parents_asked === 1 ? '' : 's'} — you'll hear when someone says yes`);
       loadForScreen();
+    },
+    pmsg: async (f, d) => {
+      const body = String(d.get('body') || '').trim(); if (!body) return;
+      await api(`/parent-chats/${S.view.id}`, { method: 'POST', body: { body } });
+      f.reset(); await loadConv(false); $('#msg-input')?.focus();
+    },
+    pplan: async (f, d) => {
+      const friend_ids = $$('[data-act=toggle-chip][aria-pressed=true]', f).map((b) => Number(b.dataset.v));
+      if (!friend_ids.length) throw new Error('Pick at least one friend');
+      const date = d.get('date'), tm = d.get('time');
+      await api('/plans', { method: 'POST', body: { kid_id: Number(d.get('kid_id')), friend_ids, date, time: tm, starts_at: new Date(`${date}T${tm}`).toISOString(), title: d.get('title'), location: d.get('location'), details: d.get('details') } });
+      closeSheet(); toast('📅 Sent — the other parents will confirm'); loadForScreen();
     },
     'host-checkin': async (f, d) => {
       const ids = $$('[data-act=toggle-chip][aria-pressed=true]', f).map((b) => Number(b.dataset.v));

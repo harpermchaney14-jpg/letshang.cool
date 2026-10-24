@@ -101,7 +101,7 @@ async function friendshipFor(env, user, id) {
 }
 
 // ---- notifications
-const PREF_FOR = { checkin: 'checkins', message: 'messages', friend_request: 'friends', friend_accepted: 'friends', friend_approval: 'friends', plan_approval: 'plans', plan_update: 'plans', ready: 'ready' };
+const PREF_FOR = { checkin: 'checkins', message: 'messages', friend_request: 'friends', friend_accepted: 'friends', friend_approval: 'friends', plan_approval: 'plans', plan_update: 'plans', ready: 'ready', parent_chat: 'messages' };
 async function notify(env, ctx, users, n, { sms = false } = {}) {
   const stmts = [];
   const texts = [];
@@ -288,7 +288,7 @@ add('POST', '/api/recover', async ({ env, request, body }) => {
 
 async function badgeCounts(env, user) {
   const n = await first(env, 'SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL', user.id);
-  let messages = 0, approvals = 0, rides = 0;
+  let messages = 0, approvals = 0, rides = 0, pmsgs = 0;
   if (user.role === 'kid') {
     const m = await first(env,
       `SELECT COUNT(*) AS n FROM messages m JOIN friendships f ON f.id = m.friendship_id
@@ -310,11 +310,12 @@ async function badgeCounts(env, user) {
           AND EXISTS (SELECT 1 FROM ride_riders x JOIN users k ON k.id = x.kid_id WHERE x.ride_id = r.id AND k.family_id = ?1)`,
       user.family_id, ago(15 * 60e3));
     rides = rd.n;
+    pmsgs = (await first(env, 'SELECT COUNT(*) AS n FROM parent_messages WHERE to_id = ? AND read_at IS NULL', user.id)).n;
   }
   const fm = await first(env, 'SELECT COUNT(*) AS n FROM family_messages WHERE to_id = ? AND read_at IS NULL', user.id);
   // Newest notification — the app plays a sound when this id goes up.
   const latest = await first(env, 'SELECT id, type, title, body, link FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', user.id);
-  return { notifications: n.n, messages, approvals, rides, family_messages: fm.n, latest_id: latest?.id || 0, latest_type: latest?.type || null,
+  return { notifications: n.n, messages, approvals, rides, parent_messages: pmsgs, family_messages: fm.n, latest_id: latest?.id || 0, latest_type: latest?.type || null,
     latest_title: latest?.title || null, latest_body: latest?.body || null, latest_link: latest?.link || null };
 }
 
@@ -714,18 +715,28 @@ async function plansFor(env, user, kidIds) {
   if (!kidIds.length) return [];
   const ph = kidIds.map(() => '?').join(',');
   const plans = await all(env,
-    `SELECT DISTINCT p.id, p.proposer_id, p.title, p.starts_at, p.ends_at, p.location, p.details, p.cancelled, p.created_at
-       FROM plans p JOIN plan_members pm ON pm.plan_id = p.id
+    `SELECT DISTINCT p.id, p.proposer_id, p.title, p.starts_at, p.ends_at, p.location, p.details, p.cancelled, p.created_at,
+            pr.role AS proposer_role, pr.display_name AS proposer_name
+       FROM plans p JOIN plan_members pm ON pm.plan_id = p.id JOIN users pr ON pr.id = p.proposer_id
       WHERE pm.kid_id IN (${ph}) AND p.starts_at > ? ORDER BY p.starts_at LIMIT 200`, ...kidIds, ago(7 * 864e5));
   if (!plans.length) return [];
   const members = await all(env,
-    `SELECT pm.plan_id, pm.kid_id, pm.parent_status, u.display_name, u.avatar, u.family_id
-       FROM plan_members pm JOIN users u ON u.id = pm.kid_id WHERE pm.plan_id IN (${plans.map(() => '?').join(',')})`, ...plans.map((p) => p.id));
+    `SELECT pm.plan_id, pm.kid_id, pm.parent_status, pm.decided_at, u.display_name, u.avatar, u.family_id, d.display_name AS decided_by_name
+       FROM plan_members pm JOIN users u ON u.id = pm.kid_id LEFT JOIN users d ON d.id = pm.decided_by
+      WHERE pm.plan_id IN (${plans.map(() => '?').join(',')})`, ...plans.map((p) => p.id));
+  // Parents see the other families' parents on each plan, so they can message them about it.
+  let famParents = [];
+  if (user.role === 'parent') {
+    const fams = [...new Set(members.map((m) => m.family_id).filter((f) => f !== user.family_id))];
+    if (fams.length) famParents = await all(env, `SELECT id, display_name, family_id FROM users WHERE role = 'parent' AND family_id IN (${fams.map(() => '?').join(',')})`, ...fams);
+  }
   return plans.map((p) => {
     const ms = members.filter((m) => m.plan_id === p.id);
     return {
-      ...p, status: planStatus(p, ms),
-      members: ms.map((m) => ({ id: m.kid_id, display_name: m.display_name, avatar: m.avatar, parent_status: m.parent_status, my_family: m.family_id === user.family_id })),
+      ...p, status: planStatus(p, ms), by_parent: p.proposer_role === 'parent',
+      members: ms.map((m) => ({ id: m.kid_id, display_name: m.display_name, avatar: m.avatar, parent_status: m.parent_status,
+        decided_by_name: m.decided_by_name ? firstName(m.decided_by_name) : null, my_family: m.family_id === user.family_id })),
+      parents: famParents.filter((fp) => ms.some((m) => m.family_id === fp.family_id)).map(({ id, display_name }) => ({ id, display_name })),
     };
   });
 }
@@ -737,7 +748,9 @@ add('GET', '/api/plans', async ({ env, user }) => {
 });
 
 add('POST', '/api/plans', async ({ env, ctx, user, body }) => {
-  const friendIds = [...new Set((Array.isArray(body.friend_ids) ? body.friend_ids : [body.friend_id]).map(toInt).filter(Boolean))].slice(0, 6);
+  // Kids plan for themselves; parents plan for one of their own kids (and that kid's approved friends).
+  const me = user.role === 'kid' ? user : await ownKid(env, user, body.kid_id);
+  const friendIds = [...new Set((Array.isArray(body.friend_ids) ? body.friend_ids : [body.friend_id]).map(toInt).filter((x) => x && x !== me.id))].slice(0, 6);
   if (!friendIds.length) fail(400, 'Pick at least one friend');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.date || ''))) fail(400, 'Pick a date');
   if (!/^\d{2}:\d{2}$/.test(String(body.time || ''))) fail(400, 'Pick a time');
@@ -745,7 +758,7 @@ add('POST', '/api/plans', async ({ env, ctx, user, body }) => {
   if (isNaN(starts)) fail(400, 'Pick a date and time');
   if (starts < new Date(Date.now() - 5 * 60e3)) fail(400, "That time already passed — pick a time that's coming up");
   for (const fid of friendIds) {
-    const [a, b] = pair(user.id, fid);
+    const [a, b] = pair(me.id, fid);
     const ok = await first(env, `SELECT id FROM friendships WHERE kid_a = ? AND kid_b = ? AND status = 'active'`, a, b);
     if (!ok) fail(403, 'You can only make plans with approved friends');
   }
@@ -757,26 +770,33 @@ add('POST', '/api/plans', async ({ env, ctx, user, body }) => {
     'INSERT INTO plans (proposer_id, title, starts_at, ends_at, location, details) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
     user.id, title, starts.toISOString(), ends && !isNaN(ends) && ends > starts ? ends.toISOString() : null,
     str(body.location, 80) || null, str(body.details, 300) || null);
-  const kidIds = [user.id, ...friendIds];
-  await env.DB.batch(kidIds.map((k) => env.DB.prepare('INSERT INTO plan_members (plan_id, kid_id) VALUES (?, ?)').bind(plan.id, k)));
+  const kidIds = [me.id, ...friendIds];
+  const byParent = user.role === 'parent';
+  await env.DB.batch(kidIds.map((k) => byParent && k === me.id
+    // A parent making the plan has already confirmed it for their own kid.
+    ? env.DB.prepare(`INSERT INTO plan_members (plan_id, kid_id, parent_status, decided_by, decided_at) VALUES (?, ?, 'approved', ?, ?)`).bind(plan.id, k, user.id, nowIso())
+    : env.DB.prepare('INSERT INTO plan_members (plan_id, kid_id) VALUES (?, ?)').bind(plan.id, k)));
 
   const kids = await usersById(env, kidIds);
   const nameOf = (id) => kids.find((k) => k.id === id)?.display_name || 'a friend';
   const others = friendIds.map(nameOf).join(', ');
   const whenText = when(env, starts.toISOString());
   for (const k of kids) {
-    const parents = await parentsOf(env, k.family_id);
-    const withWho = k.id === user.id ? others : [user.display_name, ...friendIds.filter((x) => x !== k.id).map(nameOf)].join(', ');
+    if (byParent && k.id === me.id) continue; // already confirmed by the parent who made it
+    const parents = (await parentsOf(env, k.family_id)).filter((p) => p.id !== user.id);
+    const withWho = k.id === me.id ? others : [me.display_name, ...friendIds.filter((x) => x !== k.id).map(nameOf)].join(', ');
     await notify(env, ctx, parents, {
-      type: 'plan_approval', title: `Approve a plan for ${firstName(k.display_name)}?`,
-      body: `"${title}" with ${withWho} · ${whenText}`, link: 'approvals',
+      type: 'plan_approval', title: `Confirm a plan for ${firstName(k.display_name)}?`,
+      body: `"${title}" with ${withWho} · ${whenText}${byParent ? ` · from ${firstName(user.display_name)} (${firstName(me.display_name)}'s parent)` : ''}`, link: 'approvals',
     }, { sms: true });
   }
   await notify(env, ctx, kids.filter((k) => k.id !== user.id), {
-    type: 'plan_update', title: `${user.display_name} made a plan with you!`, body: `"${title}" · ${whenText} · waiting for parents`, link: 'plans',
+    type: 'plan_update',
+    title: byParent ? `${firstName(user.display_name)} made a plan: "${title}"` : `${me.display_name} made a plan with you!`,
+    body: `${whenText} · with ${kids.map((k) => firstName(k.display_name)).join(', ')} · waiting for parents to confirm`, link: 'plans',
   });
   return json({ ok: true, id: plan.id, status: 'waiting' });
-}, { role: 'kid' });
+});
 
 add('POST', '/api/plans/:id/decision', async ({ env, ctx, user, params, body }) => {
   const planId = toInt(params.id);
@@ -790,11 +810,21 @@ add('POST', '/api/plans/:id/decision', async ({ env, ctx, user, params, body }) 
   await run(env, 'UPDATE plan_members SET parent_status = ?, decided_by = ?, decided_at = ? WHERE plan_id = ? AND kid_id = ?', status, user.id, nowIso(), planId, kid.id);
   const members = await all(env, 'SELECT kid_id, parent_status FROM plan_members WHERE plan_id = ?', planId);
   const overall = planStatus(plan, members);
+  const kids = await usersById(env, members.map((m) => m.kid_id));
+  // Let the other families' parents know this parent confirmed (or declined).
+  const otherFams = [...new Set(kids.map((k) => k.family_id).filter((f) => f !== user.family_id))];
+  const otherParents = (await Promise.all(otherFams.map((f) => parentsOf(env, f)))).flat();
+  const waitingOn = kids.filter((k) => members.find((m) => m.kid_id === k.id)?.parent_status === 'waiting').map((k) => `${firstName(k.display_name)}'s parent`);
+  await notify(env, ctx, otherParents, {
+    type: 'plan_update',
+    title: overall === 'approved' ? `✅ Plan confirmed by everyone: "${plan.title}"`
+      : status === 'approved' ? `${firstName(user.display_name)} confirmed "${plan.title}" for ${firstName(kid.display_name)}` : `${firstName(user.display_name)} declined "${plan.title}"`,
+    body: `${when(env, plan.starts_at)}${overall === 'waiting' && waitingOn.length ? ` · waiting on ${waitingOn.join(', ')}` : ''}`, link: 'plans',
+  }, { sms: overall !== 'waiting' });
   if (overall !== 'waiting') {
-    const kids = await usersById(env, members.map((m) => m.kid_id));
     await notify(env, ctx, kids, {
       type: 'plan_update',
-      title: overall === 'approved' ? `Plan approved! "${plan.title}" ✅` : `Plan not approved: "${plan.title}"`,
+      title: overall === 'approved' ? `Plan confirmed! "${plan.title}" ✅` : `Plan not approved: "${plan.title}"`,
       body: when(env, plan.starts_at), link: 'plans', dedupe: `plan:${planId}:${overall}`,
     });
   }
@@ -812,6 +842,76 @@ add('POST', '/api/plans/:id/cancel', async ({ env, ctx, user, params }) => {
   await notify(env, ctx, kids, { type: 'plan_update', title: `Plan cancelled: "${plan.title}"`, body: when(env, plan.starts_at), link: 'plans' });
   return json({ ok: true });
 });
+
+// ================================================================ parent ↔ parent messages
+/**
+ * Parents this parent may message: co-parents in the same family, and parents of kids who are
+ * approved (active) friends with any kid in this family. `kids` = which friendship connects us.
+ */
+async function reachableParents(env, user) {
+  const rows = await all(env,
+    `SELECT p.id, p.display_name, p.avatar, p.family_id, f.name AS family_name,
+            (SELECT group_concat(k2.display_name, ', ') FROM users k2 WHERE k2.family_id = p.family_id AND k2.role = 'kid') AS kid_names
+       FROM users p JOIN families f ON f.id = p.family_id
+      WHERE p.role = 'parent' AND p.id != ?2 AND (p.family_id = ?1 OR p.family_id IN (
+        SELECT o.family_id FROM friendships fr
+          JOIN users mine ON mine.family_id = ?1 AND mine.role = 'kid' AND (fr.kid_a = mine.id OR fr.kid_b = mine.id)
+          JOIN users o ON o.id = CASE WHEN fr.kid_a = mine.id THEN fr.kid_b ELSE fr.kid_a END
+         WHERE fr.status = 'active'))
+      ORDER BY p.family_id = ?1 DESC, p.display_name`, user.family_id, user.id);
+  return rows.map((r) => ({ id: r.id, display_name: r.display_name, avatar: r.avatar, co_parent: r.family_id === user.family_id, kid_names: r.kid_names || '' }));
+}
+async function parentPeer(env, user, id) {
+  const peer = (await reachableParents(env, user)).find((p) => p.id === toInt(id));
+  if (!peer) fail(403, "You can message your co-parent and parents of your kid's approved friends");
+  return peer;
+}
+
+add('GET', '/api/parent-chats', async ({ env, user }) => {
+  const peers = await reachableParents(env, user);
+  if (!peers.length) return json({ chats: [] });
+  const ph = peers.map(() => '?').join(',');
+  const last = await all(env,
+    `SELECT CASE WHEN from_id = ?1 THEN to_id ELSE from_id END AS peer, body, from_id, created_at
+       FROM parent_messages WHERE id IN (
+         SELECT MAX(id) FROM parent_messages WHERE (from_id = ?1 AND to_id IN (${peers.map((_, i) => `?${i + 2}`).join(',')}))
+            OR (to_id = ?1 AND from_id IN (${peers.map((_, i) => `?${i + 2}`).join(',')}))
+          GROUP BY CASE WHEN from_id = ?1 THEN to_id ELSE from_id END)`, user.id, ...peers.map((p) => p.id));
+  const unread = await all(env, `SELECT from_id, COUNT(*) AS n FROM parent_messages WHERE to_id = ? AND read_at IS NULL AND from_id IN (${ph}) GROUP BY from_id`, user.id, ...peers.map((p) => p.id));
+  const chats = peers.map((p) => {
+    const l = last.find((x) => x.peer === p.id), u = unread.find((x) => x.from_id === p.id);
+    return { ...p, last_body: l?.body || null, last_at: l?.created_at || null, last_mine: l ? l.from_id === user.id : false, unread: u?.n || 0 };
+  }).sort((a, b) => (b.last_at || '').localeCompare(a.last_at || ''));
+  return json({ chats });
+}, { role: 'parent' });
+
+add('GET', '/api/parent-chats/:id', async ({ env, user, params, url }) => {
+  const peer = await parentPeer(env, user, params.id);
+  const after = toInt(url.searchParams.get('after')) || 0;
+  const messages = await all(env,
+    `SELECT id, from_id, body, created_at FROM parent_messages
+      WHERE ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)) AND id > ? ORDER BY id DESC LIMIT 200`,
+    user.id, peer.id, peer.id, user.id, after);
+  messages.reverse();
+  await run(env, 'UPDATE parent_messages SET read_at = ? WHERE to_id = ? AND from_id = ? AND read_at IS NULL', nowIso(), user.id, peer.id);
+  await run(env, `UPDATE notifications SET read_at = ? WHERE user_id = ? AND dedupe_key = ? AND read_at IS NULL`, nowIso(), user.id, `pchat:${peer.id}`);
+  return json({ peer, messages });
+}, { role: 'parent' });
+
+add('POST', '/api/parent-chats/:id', async ({ env, ctx, user, params, body }) => {
+  const peer = await parentPeer(env, user, params.id);
+  const text = str(body.body, 1000);
+  if (!text) fail(400, 'Type a message');
+  await rateLimit(env, 'pmsg:' + user.id, 120, 3600e3, 'Slow down a little and try again soon.');
+  const row = await first(env, 'INSERT INTO parent_messages (from_id, to_id, body) VALUES (?, ?, ?) RETURNING id, created_at', user.id, peer.id, text);
+  const [to] = await usersById(env, [peer.id]);
+  // One text per conversation until they read it (dedupe), so a back-and-forth doesn't flood their phone.
+  await notify(env, ctx, [to], {
+    type: 'parent_chat', title: `Message from ${user.display_name}`, body: text.length > 120 ? text.slice(0, 117) + '…' : text,
+    link: `pchat:${user.id}`, dedupe: `pchat:${user.id}`,
+  }, { sms: true });
+  return json({ ok: true, id: row.id, created_at: row.created_at });
+}, { role: 'parent' });
 
 // ================================================================ I'm Ready!
 add('POST', '/api/ready', async ({ env, ctx, user, body }) => {
