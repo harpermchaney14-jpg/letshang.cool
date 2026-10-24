@@ -16,7 +16,7 @@ run_worker_first = ["/api/*"]
 [[d1_databases]]
 binding = "DB"
 database_name = "lets-hang"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"   # from: npx wrangler d1 create lets-hang
+database_id = "d251a6e9-f50a-4e71-95c6-bd6f5d2c6d7a"   # from: npx wrangler d1 create lets-hang
 migrations_dir = "migrations"
 
 [vars]
