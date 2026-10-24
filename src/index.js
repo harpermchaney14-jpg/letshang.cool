@@ -4,6 +4,7 @@
 import { hashPassword, verifyPassword, createSession, readSession, destroySession } from './auth.js';
 import { sendSms, normalizePhone, verifyTwilioSignature, smsConfigured } from './sms.js';
 import { TIME_RE, toMin, localNow, pickSchoolDay, schedule, walkWeather, geocode } from './today.js';
+import { MIGRATIONS } from './schema.js';
 
 // ================================================================ helpers
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
@@ -133,10 +134,38 @@ function add(method, path, handler, opts = {}) {
   routes.push({ method, re, keys, handler, auth: opts.auth !== false, role: opts.role, raw: !!opts.raw });
 }
 
+// ---- self-setup: apply any database migrations that haven't run yet.
+// Uses the same d1_migrations table as `wrangler d1 migrations apply`, so the two never double-apply.
+let schemaReady = null;
+async function applyMigrations(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE, applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`).run();
+  const done = new Set((await all(env, 'SELECT name FROM d1_migrations')).map((r) => r.name));
+  const applied = [];
+  for (const m of MIGRATIONS) {
+    if (done.has(m.name)) continue;
+    // One batch = one transaction: the migration and its record land together or not at all.
+    await env.DB.batch([
+      ...m.statements.map((s) => env.DB.prepare(s)),
+      env.DB.prepare('INSERT INTO d1_migrations (name) VALUES (?)').bind(m.name),
+    ]);
+    applied.push(m.name);
+  }
+  if (applied.length) console.log('Applied migrations:', applied.join(', '));
+}
+function ensureSchema(env) {
+  if (!schemaReady) schemaReady = applyMigrations(env).catch((e) => { schemaReady = null; throw e; });
+  return schemaReady;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    try { await ensureSchema(env); } catch (e) {
+      console.error('Database setup failed', e);
+      return json({ error: 'Database setup failed: ' + String(e.message || e).slice(0, 200) }, { status: 500 });
+    }
     if (request.method !== 'GET' && url.pathname !== '/api/sms/inbound') {
       const origin = request.headers.get('origin');
       if (origin && origin !== url.origin) return json({ error: 'Bad origin' }, { status: 403 });
@@ -184,7 +213,8 @@ add('GET', '/api/health', async ({ env }) => {
   try {
     const t = await all(env, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('users','friendships','houses','plans')");
     const cols = await all(env, "SELECT name FROM pragma_table_info('users') WHERE name = 'theme'");
-    return json({ ok: t.length === 4 && cols.length === 1, tables: t.map((x) => x.name).sort(), theme_column: cols.length === 1 });
+    const mig = await all(env, 'SELECT name FROM d1_migrations ORDER BY id');
+    return json({ ok: t.length === 4 && cols.length === 1, tables: t.map((x) => x.name).sort(), theme_column: cols.length === 1, migrations: mig.map((x) => x.name) });
   } catch (e) {
     return json({ ok: false, error: 'Database not reachable — is the D1 binding named DB?' }, { status: 500 });
   }
