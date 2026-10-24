@@ -1,0 +1,6 @@
+# Copy to .dev.vars for local testing with real texts. Leave blank to simulate texts.
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_FROM=
+# TWILIO_MESSAGING_SERVICE_SID=
+WEATHER_MOCK=1

@@ -1,0 +1,17 @@
+{
+  "name": "lets-hang",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Let's Hang — friends, chat, parent-approved plans, I'm Ready!, games, and host-house check-in for middle schoolers",
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply lets-hang --local",
+    "db:migrate:remote": "wrangler d1 migrations apply lets-hang --remote",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
