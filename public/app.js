@@ -28,6 +28,7 @@
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time(iso);
   }
   const whenText = (iso) => `${dayLabel(new Date(iso))} · ${time(iso)}`;
+  const phoneTxt = (p) => { const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(p || ''); return m ? `(${m[1]}) ${m[2]}-${m[3]}` : (p || ''); };
   const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const hm = (hhmm) => { const [h, m] = String(hhmm).split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')}`; };
   const defaultSession = () => (new Date().getHours() < 11 ? 'before' : 'after');
@@ -1059,8 +1060,9 @@
         <p>🎒 Out ${hm(t.schedule.end)} · home ~${hm(t.schedule.home)}</p>
         <p class="small muted">${t.schedule.walk_miles} mi ≈ ${t.schedule.walk_minutes} min walk · weather for ${esc(t.location)}</p>` : '<p class="muted">Loading…</p>'}</div>
       ${sectionTitle('Family', '<button class="ghost-button sm" data-act="add-kid">+ Kid</button>')}
-      <div class="panel list">${S.family.map((u) => `<div class="row-btn static">${ava(u.avatar)}<span class="grow"><b>${esc(u.display_name)}</b><span class="sub">${u.role === 'parent' ? 'Parent' : 'Kid'} · @${esc(u.username)}</span></span>
-        ${u.role === 'kid' ? `<button class="ghost-button sm" data-act="open" data-view="kid" data-id="${u.id}">Manage</button>` : ''}</div>`).join('')}
+      <div class="panel list">${S.family.map((u) => `<div class="row-btn static">${ava(u.avatar)}<span class="grow"><b>${esc(u.display_name)}</b><span class="sub">${u.role === 'parent' ? `Parent · @${esc(u.username)}<br>${u.phone ? `📱 ${esc(phoneTxt(u.phone))}${u.sms_opt_in ? ' · texts on' : ' · texts off'}` : '📱 No cell number yet'}` : `Kid · @${esc(u.username)}`}</span></span>
+        ${u.role === 'kid' ? `<button class="ghost-button sm" data-act="open" data-view="kid" data-id="${u.id}">Manage</button>`
+          : u.id !== S.me.id ? `<button class="ghost-button sm" data-act="parent-phone" data-id="${u.id}">${u.phone ? 'Edit cell' : '+ Add cell'}</button>` : ''}</div>`).join('')}
         <button class="linkish small" data-act="add-parent">+ Add another parent / guardian</button></div>
       <form class="panel stack" data-form="parent-pw"><h3>Change password</h3>
         <label class="fld"><span>Current password</span><input class="field" name="current_password" type="password" required autocomplete="current-password"></label>
@@ -1178,8 +1180,18 @@
       <label class="fld"><span>Name</span><input class="field" name="display_name" required></label>
       <label class="fld"><span>Username</span><input class="field" name="username" autocapitalize="none" required></label>
       <label class="fld"><span>Password (8+)</span><input class="field" name="password" type="text" autocomplete="off" minlength="8" required></label>
+      <label class="fld"><span>Their cell phone (for text alerts)</span><input class="field" name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="(605) 555-0123"></label>
+      <label class="check"><input type="checkbox" name="sms_opt_in" checked><span>They agreed to get texts for approvals, pickups, rides and "I'm Ready!" alerts. Reply STOP to opt out.</span></label>
       <p class="form-error" data-err role="alert"></p>
       <button class="primary-button block big" type="submit">Add</button><button type="button" class="ghost-button block" data-act="close-sheet">Cancel</button></form>`);
+  }
+  function sheetParentPhone(id) {
+    const u = S.family.find((x) => x.id === id);
+    openSheet(`<form data-form="parent-phone" class="stack"><input type="hidden" name="id" value="${id}"><h2>${esc(first(u.display_name))}'s cell</h2>
+      <label class="fld"><span>Cell phone</span><input class="field" name="phone" type="tel" inputmode="tel" autocomplete="off" value="${esc(phoneTxt(u.phone))}" placeholder="(605) 555-0123"></label>
+      <label class="check"><input type="checkbox" name="sms_opt_in" ${u.sms_opt_in || !u.phone ? 'checked' : ''}><span>They agreed to get text alerts. Reply STOP to opt out.</span></label>
+      <p class="form-error" data-err role="alert"></p>
+      <button class="primary-button block big" type="submit">Save</button><button type="button" class="ghost-button block" data-act="close-sheet">Cancel</button></form>`);
   }
   function sheetRecovery(code, title = 'Save your recovery code') {
     openSheet(`<div class="stack"><h2>${title}</h2>
@@ -1357,6 +1369,7 @@
     // parent
     'add-kid': () => sheetAddKid(),
     'add-parent': () => sheetAddParent(),
+    'parent-phone': (el) => sheetParentPhone(Number(el.dataset.id)),
     'kid-edit': (el) => sheetEditKid(Number(el.dataset.id)),
     'kid-chat': async (el) => { await api(`/kids/${el.dataset.id}`, { method: 'PATCH', body: { chat_enabled: el.checked } }).catch((e) => toast(e.message, 'warn')); toast(el.checked ? 'Chat turned on' : 'Chat paused'); },
     'kid-delete': async (el) => {
@@ -1442,7 +1455,8 @@
       if (d.get('pin')) body.pin = d.get('pin');
       await api(`/kids/${d.get('id')}`, { method: 'PATCH', body }); await refreshMe(); closeSheet(); toast('Saved'); loadForScreen();
     },
-    'add-parent': async (f, d) => { const r = await api('/parents', { method: 'POST', body: Object.fromEntries(d) }); await refreshMe(); closeSheet(); paint(); sheetRecovery(r.recovery_code, 'Their recovery code'); },
+    'parent-phone': async (f, d) => { await api(`/parents/${d.get('id')}`, { method: 'PATCH', body: { phone: d.get('phone'), sms_opt_in: d.get('sms_opt_in') === 'on' } }); await refreshMe(); closeSheet(); paint(); toast('📱 Saved'); },
+    'add-parent': async (f, d) => { const r = await api('/parents', { method: 'POST', body: { ...Object.fromEntries(d), sms_opt_in: d.get('sms_opt_in') === 'on' } }); await refreshMe(); closeSheet(); paint(); sheetRecovery(r.recovery_code, 'Their recovery code'); },
     'parent-profile': async (f, d) => { await api('/me', { method: 'PATCH', body: { display_name: d.get('display_name'), phone: d.get('phone'), sms_opt_in: d.get('sms_opt_in') === 'on' } }); await refreshMe(); render(); loadForScreen(); toast('Saved'); },
     'parent-pw': async (f, d) => { await api('/me', { method: 'PATCH', body: Object.fromEntries(d) }); f.reset(); toast('Password updated'); },
   };

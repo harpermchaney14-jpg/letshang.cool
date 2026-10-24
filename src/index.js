@@ -410,13 +410,26 @@ add('POST', '/api/parents', async ({ env, user, body }) => {
   if (!USERNAME_RE.test(username)) fail(400, 'Username: 3–30 letters, numbers, dots or dashes');
   if (pw.length < 8) fail(400, 'Password needs at least 8 characters');
   if (await first(env, 'SELECT id FROM users WHERE username = ?', username)) fail(409, 'That username is taken');
+  const phone = body.phone ? normalizePhone(body.phone) : null;
+  if (body.phone && !phone) fail(400, "That phone number doesn't look right");
   const { hash, salt } = await hashPassword(pw);
   const recovery = randomRecoveryCode();
   const rec = await hashPassword(recovery);
   await run(env,
-    `INSERT INTO users (family_id, role, display_name, username, pass_hash, pass_salt, avatar, onboarded, recovery_hash, recovery_salt)
-     VALUES (?, 'parent', ?, ?, ?, ?, 'crown', 1, ?, ?)`, user.family_id, name, username, hash, salt, rec.hash, rec.salt);
+    `INSERT INTO users (family_id, role, display_name, username, pass_hash, pass_salt, avatar, onboarded, recovery_hash, recovery_salt, phone, sms_opt_in)
+     VALUES (?, 'parent', ?, ?, ?, ?, 'crown', 1, ?, ?, ?, ?)`, user.family_id, name, username, hash, salt, rec.hash, rec.salt,
+    phone, phone && bool(body.sms_opt_in) ? 1 : 0);
   return json({ ok: true, recovery_code: recovery });
+}, { role: 'parent' });
+
+// A parent can set the cell number of another parent in the same family.
+add('PATCH', '/api/parents/:id', async ({ env, user, params, body }) => {
+  const other = await first(env, `SELECT id, family_id FROM users WHERE id = ? AND role = 'parent'`, toInt(params.id));
+  if (!other || other.family_id !== user.family_id) fail(404, 'Parent not found');
+  const phone = body.phone ? normalizePhone(body.phone) : null;
+  if (body.phone && !phone) fail(400, "That phone number doesn't look right");
+  await run(env, 'UPDATE users SET phone = ?, sms_opt_in = ? WHERE id = ?', phone, phone && bool(body.sms_opt_in) ? 1 : 0, other.id);
+  return json({ ok: true });
 }, { role: 'parent' });
 
 add('PATCH', '/api/kids/:id', async ({ env, user, params, body }) => {
