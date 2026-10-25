@@ -1,5 +1,7 @@
 name = "letshang-cool"
 main = "src/index.js"
+# Keep variables added in the Cloudflare dashboard (like FINNHUB_KEY) when GitHub deploys.
+keep_vars = true
 compatibility_date = "2025-09-01"
 
 # Front end (HTML/CSS/JS) lives in ./public. /api/* always goes to the Worker.

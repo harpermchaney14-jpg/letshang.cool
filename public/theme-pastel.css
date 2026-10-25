@@ -298,3 +298,6 @@ html[data-theme="pastel"] .badge-chip { border-color: var(--p-lav); } html[data-
 html[data-theme="pastel"] .tool-field input[type=range] { accent-color: var(--p-lav-d); }
 html[data-theme="pastel"] .up, html[data-theme="pastel"] .ok-text { color: #2f8a4f; } html[data-theme="pastel"] .down, html[data-theme="pastel"] .warn-text { color: #c0305a; }
 html[data-theme="pastel"] .mk-chart.up polyline { stroke: #2f8a4f; } html[data-theme="pastel"] .mk-chart.down polyline { stroke: #c0305a; }
+html[data-theme="pastel"] .ptt { background: #fff; border-color: var(--p-lav-d); box-shadow: var(--p-shadow); }
+html[data-theme="pastel"] .ptt.recording { background: var(--p-pink-d); }
+html[data-theme="pastel"] .voice-btn { background: var(--p-lav); color: var(--p-ink); } html[data-theme="pastel"] .voice-btn.on { background: #fff0b3; }

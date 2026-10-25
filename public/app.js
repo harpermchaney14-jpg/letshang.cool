@@ -643,7 +643,7 @@
       <p class="note">🔒 Only approved friends can message you. Your parent can see your chats.</p>
       ${!list ? empty('⏳', 'Loading…') : !list.length ? empty('💬', 'No chats yet. Add a friend to start talking!', '<button class="primary-button" data-act="tab" data-tab="friends" style="margin-top:12px">Add friends</button>')
         : `<div class="panel list">${list.map((c) => `<button class="row-btn" data-act="open" data-view="conv" data-id="${c.friendship_id}">
-            ${ava(c.avatar)}<span class="grow"><b>${esc(c.display_name)}</b><span class="sub">${c.last_body ? (c.last_sender === S.me.id ? 'You: ' : '') + esc(c.last_body) : 'Say hi! 👋'}</span></span>
+            ${ava(c.avatar)}<span class="grow"><b>${codeName(c)}</b><span class="sub">${c.last_body ? (c.last_sender === S.me.id ? 'You: ' : '') + esc(c.last_body) : 'Say hi! 👋'}</span></span>
             <span class="meta">${c.last_at ? `<span class="tiny">${ago(c.last_at)}</span>` : ''}${c.unread ? `<span class="unread" aria-label="${c.unread} unread">${c.unread}</span>` : ''}</span></button>`).join('')}</div>`}`;
   }
   async function loadConv(full) {
@@ -672,9 +672,79 @@
       if (!d.messages.length) return;
       if (d.messages.some((m) => m.sender_id !== S.me.id)) Sound.play('message');
       S.conv.messages = S.conv.messages.concat(d.messages);
+      const v = isKid() && [...d.messages].reverse().find((m) => m.voice_id && m.sender_id !== S.me.id);
+      if (v && !Walkie.rec) setTimeout(() => Walkie.play(v.voice_id), 900); // walkie-talkie style: plays right away if the phone allows
       const m = $('#msgs'); if (m) { m.innerHTML = convMsgs(); scrollChat(); }
     } else S.conv = { id: v.id, ...d };
   }
+  // ---- code names + walkie-talkie
+  const codeName = (p, small = true) => (isKid() && p?.code_name ? `🕵️ ${esc(p.code_name)}${small ? ` <small class="real-name">(${esc(p.display_name)})</small>` : ''}` : esc(p?.display_name || ''));
+  const CODE_A = ['Agent', 'Captain', 'Secret', 'Major', 'Professor', 'Super', 'Turbo', 'Night', 'Cosmic', 'Mystery'];
+  const CODE_B = ['Taco', 'Comet', 'Ninja', 'Pickle', 'Falcon', 'Waffle', 'Panda', 'Thunder', 'Noodle', 'Rocket', 'Sprinkles', 'Shadow', 'Unicorn', 'Meatball'];
+  function sheetCodeName(fid, name, current) {
+    const ideas = []; for (let i = 0; ideas.length < 6 && i < 50; i++) { const n = `${pick(CODE_A)} ${pick(CODE_B)}`; if (!ideas.includes(n)) ideas.push(n); }
+    openSheet(`<form data-form="codename" class="stack"><input type="hidden" name="fid" value="${fid}">
+      <h2>🕵️ Code name for ${esc(first(name))}</h2><p class="small muted">Only you two see it. Keep it kind — it goes through the same word filter as chat.</p>
+      <label class="fld"><span>Code name</span><input class="field" name="name" maxlength="24" value="${esc(current || '')}" placeholder="e.g. Agent Taco"></label>
+      <div class="chips">${ideas.map((i) => `<button type="button" class="chip" data-act="code-idea" data-v="${esc(i)}">${esc(i)}</button>`).join('')}</div>
+      <p class="form-error" data-err></p>
+      <button class="primary-button block" type="submit">Save code name</button>
+      ${current ? '<button type="button" class="ghost-button block" data-act="code-clear">Remove code name</button>' : ''}
+      <button type="button" class="ghost-button block" data-act="close-sheet">Cancel</button></form>`);
+  }
+  const Walkie = {
+    rec: null, stream: null, chunks: [], t0: 0, timer: null, audio: null, playing: null,
+    mime() { for (const m of ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm']) if (window.MediaRecorder?.isTypeSupported?.(m)) return m; return ''; },
+    async start(btn) {
+      if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) { toast('This browser can’t record voice. Try Safari or Chrome.', 'warn'); return; }
+      if (this.rec) return;
+      this.holding = true;
+      try { this.stream = this.stream?.active ? this.stream : await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+      catch { toast('🎙️ Allow the microphone to use the walkie-talkie', 'warn'); return; }
+      if (!this.holding) { toast('🎙️ Mic is ready — now hold the button and talk'); return; }
+      const mime = this.mime();
+      this.chunks = []; this.rec = new MediaRecorder(this.stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+      this.rec.ondataavailable = (e) => { if (e.data.size) this.chunks.push(e.data); };
+      this.rec.onstop = () => this.finish();
+      this.rec.start(); this.t0 = Date.now(); Sound.play('chime', true);
+      btn?.classList.add('recording'); document.body.classList.add('walkie-rec');
+      const tag = $('#ptt-status'); if (tag) tag.hidden = false;
+      this.timer = setInterval(() => { const s = (Date.now() - this.t0) / 1000; const t = $('#ptt-time'); if (t) t.textContent = `${Math.min(15, s).toFixed(0)}s`; if (s >= 15) this.stop(); }, 200);
+    },
+    stop() {
+      this.holding = false;
+      clearInterval(this.timer);
+      document.body.classList.remove('walkie-rec'); $$('.ptt.recording').forEach((b) => b.classList.remove('recording'));
+      const tag = $('#ptt-status'); if (tag) tag.hidden = true;
+      if (this.rec && this.rec.state !== 'inactive') this.rec.stop();
+    },
+    async finish() {
+      const secs = (Date.now() - this.t0) / 1000, type = (this.rec?.mimeType || 'audio/webm').split(';')[0];
+      this.rec = null;
+      if (secs < 0.7) { toast('Hold the button while you talk 📻'); return; }
+      const blob = new Blob(this.chunks, { type });
+      const fid = S.view?.id;
+      try {
+        const res = await fetch(`/api/chats/${fid}/voice`, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': type, 'x-duration': String(Math.min(15, secs).toFixed(1)) }, body: blob });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || 'Could not send');
+        toast('📻 Sent!'); await loadConv(false);
+      } catch (e) { toast(e.message, 'warn'); }
+    },
+    play(id, btn) {
+      if (!this.audio) this.audio = new Audio();
+      const a = this.audio;
+      if (this.playing === id && !a.paused) { a.pause(); this.playing = null; this.mark(); return; }
+      a.src = `/api/voice/${id}`; this.playing = id;
+      a.onended = () => { this.playing = null; this.mark(); };
+      a.play().then(() => this.mark()).catch(() => { this.playing = null; this.mark(); toast('Tap ▶️ to listen', 'warn'); });
+    },
+    mark() { $$('.voice-btn').forEach((b) => { const on = Number(b.dataset.id) === this.playing; b.classList.toggle('on', on); const i = b.querySelector('.vb-i'); if (i) i.textContent = on ? '⏸' : '▶️'; }); },
+  };
+  // hold-to-talk: press and hold the 📻 button
+  document.addEventListener('pointerdown', (e) => { const b = e.target.closest('.ptt'); if (!b) return; e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch { /* */ } Walkie.start(b); });
+  ['pointerup', 'pointercancel'].forEach((ev) => document.addEventListener(ev, () => { if (Walkie.holding || Walkie.rec) Walkie.stop(); }));
+  document.addEventListener('contextmenu', (e) => { if (e.target.closest('.ptt')) e.preventDefault(); });
   function convMsgs() {
     const c = S.conv;
     if (!c.messages.length) return `<div class="empty"><div class="e">👋</div><p>Start the conversation!</p></div>`;
@@ -686,14 +756,14 @@
       const mine = isKid() && m.sender_id === S.me.id;
       const who = c.people[m.sender_id];
       return `${hdr}<div class="msg ${mine ? 'mine' : ''}">${!isKid() ? `<div class="who">${esc(who?.display_name || '')}</div>` : ''}
-        <div class="bubble">${esc(m.body)}</div><div class="time">${time(m.created_at)}</div></div>`;
+        <div class="bubble">${m.voice_id ? `<button class="voice-btn ${Walkie.playing === m.voice_id ? 'on' : ''}" data-act="voice-play" data-id="${m.voice_id}" aria-label="Play walkie-talkie message"><span class="vb-i">${Walkie.playing === m.voice_id ? '⏸' : '▶️'}</span> ${esc(m.body)}</button>` : esc(m.body)}</div><div class="time">${time(m.created_at)}</div></div>`;
     }).join('');
   }
   function viewConversation() {
     const c = S.conv && S.conv.id === S.view.id ? S.conv : null;
     if (!c) return subHeader('Chat') + empty('⏳', 'Loading…');
     const other = isKid() ? Object.values(c.people).find((p) => p.id !== S.me.id) : null;
-    const title = isKid() ? esc(other?.display_name) : Object.values(c.people).map((p) => esc(p.display_name)).join(' + ');
+    const title = isKid() ? codeName(other) : Object.values(c.people).map((p) => esc(p.display_name)).join(' + ');
     return `${subHeader(`${isKid() ? ava(other?.avatar, 'sm') : ''}<span>${title}</span>`, isKid() && !c.read_only ? `<button class="icon-button" data-act="conv-menu" data-id="${other.id}" aria-label="Block or report">${I.more}</button>` : '')}
       ${isKid() && !c.read_only ? `<button class="plan-cta" data-act="plan-new" data-friend="${other.id}"><span aria-hidden="true">📅</span> Made a Plan with ${esc(first(other.display_name))}</button>` : ''}
       ${!isKid() ? '<p class="note">👀 Read-only view of your kid\'s chat.</p>' : c.read_only ? '<p class="note">This chat is closed.</p>' : ''}
@@ -701,8 +771,10 @@
       ${isKid() && !c.read_only ? `<div class="chat-pad"></div>
       <form class="composer" data-form="msg">
         <label class="sr" for="msg-input">Message</label>
+        <button type="button" class="ptt" aria-label="Hold to talk (walkie-talkie)" title="Hold to talk">📻</button>
         <textarea id="msg-input" class="field" name="body" rows="1" maxlength="500" placeholder="Message ${esc(first(other.display_name))}…" enterkeyhint="send"></textarea>
         <button class="primary-button" type="submit" aria-label="Send">${I.send}</button>
+        <div class="ptt-status" id="ptt-status" hidden>🔴 Recording <b id="ptt-time">0s</b> · let go to send</div>
       </form>` : ''}`;
   }
   function scrollChat(force) {
@@ -788,7 +860,7 @@
   function kidFriends() {
     const f = S.friends;
     if (!f) return sectionTitle('Friends') + empty('⏳', 'Loading…');
-    const row = (it, actions) => `<div class="row-btn static">${ava(it.kid.avatar)}<span class="grow"><b>${esc(it.kid.display_name)}</b></span>${actions}</div>`;
+    const row = (it, actions) => `<div class="row-btn static">${ava(it.kid.avatar)}<span class="grow"><b>${codeName(it.kid)}</b>${it.my_code_name ? `<span class="sub">🕵️ They call you “${esc(it.my_code_name)}”</span>` : ''}</span>${actions}</div>`;
     return `${sectionTitle('Friends')}
       <div class="panel stack tone-yellow">
         <h3>Your friend code</h3>
@@ -811,7 +883,7 @@
       ${sectionTitle(`My friends${f.friends.length ? ` (${f.friends.length})` : ''}`)}
       ${f.friends.length ? `<div class="panel list">${f.friends.map((it) => row(it, `<span class="row-actions">
           <button class="ghost-button sm" data-act="open" data-view="conv" data-id="${it.friendship_id}" aria-label="Message ${esc(it.kid.display_name)}">💬</button>
-          <button class="ghost-button sm" data-act="friend-menu" data-id="${it.friendship_id}" data-kid="${it.kid.id}" data-name="${esc(it.kid.display_name)}" aria-label="More for ${esc(it.kid.display_name)}">${I.more}</button></span>`)).join('')}</div>`
+          <button class="ghost-button sm" data-act="friend-menu" data-id="${it.friendship_id}" data-kid="${it.kid.id}" data-name="${esc(it.kid.display_name)}" data-code="${esc(it.kid.code_name || '')}" aria-label="More for ${esc(it.kid.display_name)}">${I.more}</button></span>`)).join('')}</div>`
         : empty('🫶', 'No friends yet. Trade codes with someone you know!')}`;
   }
 
@@ -1733,9 +1805,10 @@
       <p>If you ever forget your password, this code lets you reset it. <b>Write it down or screenshot it now</b> — we won't show it again.</p>
       <div class="code-box">${esc(code)}</div><button class="primary-button block big" data-act="close-sheet">I saved it</button></div>`);
   }
-  function sheetSafety(kidId, name, friendshipId) {
+  function sheetSafety(kidId, name, friendshipId, code) {
     openSheet(`<div class="stack"><h2>${esc(name)}</h2>
       ${friendshipId ? `<button class="warm-button block" data-act="plan-new" data-friend="${kidId}">📅 Made a Plan</button>
+      <button class="ghost-button block" data-act="code-name" data-id="${friendshipId}" data-name="${esc(name)}" data-code="${esc(code || '')}">🕵️ ${code ? 'Change' : 'Give a'} code name</button>
       <button class="ghost-button block" data-act="friend-remove" data-id="${friendshipId}" data-confirm="Remove ${esc(name)} as a friend?">Remove friend</button>` : ''}
       <button class="ghost-button block" data-act="block" data-id="${kidId}" data-name="${esc(name)}">🚫 Block</button>
       <button class="danger-button block" data-act="report-start" data-id="${kidId}" data-name="${esc(name)}">🛡️ Report</button>
@@ -1824,8 +1897,12 @@
       toast(r.status === 'awaiting_parent' ? '🎉 Accepted! Now your parents approve.' : 'Request declined'); loadForScreen();
     }),
     'friend-remove': async (el) => { if (el.dataset.confirm && !confirm(el.dataset.confirm)) return; await withBusy(el, async () => { await api(`/friends/${el.dataset.id}`, { method: 'DELETE' }); closeSheet(); toast('Removed'); loadForScreen(); }); },
-    'friend-menu': (el) => sheetSafety(Number(el.dataset.kid), el.dataset.name, Number(el.dataset.id)),
-    'conv-menu': (el) => { const p = S.conv.people[el.dataset.id]; sheetSafety(p.id, p.display_name, S.conv.id); },
+    'friend-menu': (el) => sheetSafety(Number(el.dataset.kid), el.dataset.name, Number(el.dataset.id), el.dataset.code),
+    'code-name': (el) => sheetCodeName(Number(el.dataset.id), el.dataset.name, el.dataset.code),
+    'code-idea': (el) => { const i = $('#modal-root input[name=name]'); if (i) i.value = el.dataset.v; },
+    'code-clear': async () => { const f = $('#modal-root form[data-form=codename]'); try { await api(`/friends/${f.fid.value}/codename`, { method: 'POST', body: { name: '' } }); closeSheet(); toast('Code name removed'); loadForScreen(); } catch (e) { toast(e.message, 'warn'); } },
+    'voice-play': (el) => Walkie.play(Number(el.dataset.id), el),
+    'conv-menu': (el) => { const p = S.conv.people[el.dataset.id]; sheetSafety(p.id, p.display_name, S.conv.id, p.code_name); },
     block: async (el) => { if (!confirm(`Block ${el.dataset.name}? They won't be able to message you or find your code.`)) return; await withBusy(el, async () => { await api('/blocks', { method: 'POST', body: { user_id: Number(el.dataset.id) } }); closeSheet(); toast('Blocked'); if (S.view?.name === 'conv') back(); else loadForScreen(); }); },
     'report-start': (el) => sheetReport(Number(el.dataset.id), el.dataset.name),
     'radio-chip': (el) => { setPressed(el, '[data-act=radio-chip]', 'aria-checked'); el.closest('form').reason.value = el.dataset.v; },
@@ -2021,6 +2098,7 @@
 
   // ================================================================ forms
   const F = {
+    codename: async (f, d) => { await api(`/friends/${d.get('fid')}/codename`, { method: 'POST', body: { name: d.get('name') } }); closeSheet(); toast('🕵️ Code name saved'); if (S.view?.name === 'conv') { await loadConv(true); paint(); } else loadForScreen(); },
     login: async (f, d) => { await api('/login', { method: 'POST', body: { username: d.get('username'), password: d.get('password'), role: S.door } }); await boot(); },
     signup: async (f, d) => {
       const r = await api('/signup', { method: 'POST', body: { name: d.get('name'), username: d.get('username'), password: d.get('password'), phone: d.get('phone'), sms_opt_in: d.get('sms_opt_in') === 'on' } });

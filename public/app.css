@@ -957,3 +957,14 @@ body.alert-flash::after { content: ''; position: fixed; inset: 0; z-index: 89; p
 .mk-chart.up polyline { stroke: #19f58a; } .mk-chart.down polyline { stroke: #ff5f6d; }
 .quote-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; } .quote-grid > div { padding: 8px; border-radius: 10px; background: rgba(255,255,255,.07); display: flex; flex-direction: column; font-size: 13px; } .quote-grid small { opacity: .75; font-weight: 800; font-size: 11px; }
 .mk-est { margin: 0; font-family: var(--display); font-size: 26px; }
+
+/* ======== Walkie-talkie + code names ======== */
+.ptt { appearance: none; flex-shrink: 0; width: 50px; height: 50px; border-radius: 50%; border: 3px solid var(--yellow); background: #1b0040; font-size: 24px; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; box-shadow: 0 0 12px rgba(255,212,0,.5); }
+.ptt.recording { background: #ff2d55; border-color: #fff; transform: scale(1.15); animation: pttpulse .8s ease-in-out infinite; }
+@keyframes pttpulse { 50% { box-shadow: 0 0 0 10px rgba(255,45,85,.3); } }
+.ptt-status { position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); white-space: nowrap; padding: 8px 14px; border-radius: 999px; background: #ff2d55; color: #fff; font-weight: 900; font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+.ptt-status[hidden] { display: none; }
+.voice-btn { appearance: none; display: inline-flex; align-items: center; gap: 8px; border: 0; background: rgba(255,255,255,.14); color: inherit; font: inherit; font-weight: 800; padding: 8px 14px; border-radius: 999px; cursor: pointer; }
+.voice-btn .vb-i { font-size: 18px; }
+.voice-btn.on { background: var(--yellow); color: #10002a; }
+.real-name { font-weight: 600; opacity: .7; font-size: .8em; }

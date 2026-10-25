@@ -101,7 +101,7 @@ async function friendshipFor(env, user, id) {
 }
 
 // ---- notifications
-const PREF_FOR = { checkin: 'checkins', message: 'messages', friend_request: 'friends', friend_accepted: 'friends', friend_approval: 'friends', plan_approval: 'plans', plan_update: 'plans', ready: 'ready', parent_chat: 'messages' };
+const PREF_FOR = { checkin: 'checkins', message: 'messages', friend_request: 'friends', friend_accepted: 'friends', friend_approval: 'friends', plan_approval: 'plans', plan_update: 'plans', ready: 'ready', parent_chat: 'messages', walkie: 'messages', codename: 'friends' };
 async function notify(env, ctx, users, n, { sms = false } = {}) {
   const stmts = [];
   const texts = [];
@@ -207,6 +207,7 @@ export default {
       env.DB.prepare('DELETE FROM rides WHERE starts_at < ?').bind(ago(90 * 864e5)),
     ]);
     await pruneMarket(env).catch(() => {});
+    await run(env, 'DELETE FROM voice_clips WHERE created_at < ?', ago(30 * 864e5)).catch(() => {});
   },
 };
 
@@ -497,13 +498,14 @@ add('DELETE', '/api/family', async ({ env, user, body }) => {
 async function friendsView(env, kidId) {
   const rows = await all(env,
     `SELECT f.id, f.status, f.requested_by, f.parent_ok_a, f.parent_ok_b, f.kid_a, f.kid_b, f.updated_at,
+            CASE WHEN f.kid_a = ?1 THEN f.code_b ELSE f.code_a END AS code_name, CASE WHEN f.kid_a = ?1 THEN f.code_a ELSE f.code_b END AS my_code_name,
             o.id AS other_id, o.display_name, o.avatar
        FROM friendships f JOIN users o ON o.id = CASE WHEN f.kid_a = ?1 THEN f.kid_b ELSE f.kid_a END
       WHERE (f.kid_a = ?1 OR f.kid_b = ?1) AND f.status IN ('pending','awaiting_parent','active')
       ORDER BY o.display_name`, kidId);
   const out = { friends: [], incoming: [], outgoing: [], awaiting_parent: [] };
   for (const r of rows) {
-    const item = { friendship_id: r.id, kid: { id: r.other_id, display_name: r.display_name, avatar: r.avatar }, since: r.updated_at };
+    const item = { friendship_id: r.id, kid: { id: r.other_id, display_name: r.display_name, avatar: r.avatar, code_name: r.code_name || null }, my_code_name: r.my_code_name || null, since: r.updated_at };
     if (r.status === 'active') out.friends.push(item);
     else if (r.status === 'awaiting_parent') out.awaiting_parent.push(item);
     else if (r.requested_by === kidId) out.outgoing.push(item);
@@ -1000,6 +1002,7 @@ add('POST', '/api/reports', async ({ env, ctx, user, body }) => {
 async function chatList(env, kidId) {
   return all(env,
     `SELECT f.id AS friendship_id, o.id AS other_id, o.display_name, o.avatar,
+            CASE WHEN f.kid_a = ?1 THEN f.code_b ELSE f.code_a END AS code_name,
             (SELECT body FROM messages WHERE friendship_id = f.id ORDER BY id DESC LIMIT 1) AS last_body,
             (SELECT sender_id FROM messages WHERE friendship_id = f.id ORDER BY id DESC LIMIT 1) AS last_sender,
             (SELECT created_at FROM messages WHERE friendship_id = f.id ORDER BY id DESC LIMIT 1) AS last_at,
@@ -1019,14 +1022,14 @@ add('GET', '/api/chats/:id/messages', async ({ env, user, params, url }) => {
   const f = await friendshipFor(env, user, params.id);
   const after = toInt(url.searchParams.get('after')) || 0;
   const rows = after
-    ? await all(env, 'SELECT id, sender_id, body, created_at FROM messages WHERE friendship_id = ? AND id > ? ORDER BY id LIMIT 200', f.id, after)
-    : (await all(env, 'SELECT id, sender_id, body, created_at FROM messages WHERE friendship_id = ? ORDER BY id DESC LIMIT 150', f.id)).reverse();
+    ? await all(env, 'SELECT id, sender_id, body, voice_id, created_at FROM messages WHERE friendship_id = ? AND id > ? ORDER BY id LIMIT 200', f.id, after)
+    : (await all(env, 'SELECT id, sender_id, body, voice_id, created_at FROM messages WHERE friendship_id = ? ORDER BY id DESC LIMIT 150', f.id)).reverse();
   if (user.role === 'kid' && rows.length) {
     await run(env, `INSERT INTO chat_reads (friendship_id, user_id, last_read_id) VALUES (?, ?, ?)
       ON CONFLICT(friendship_id, user_id) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id)`, f.id, user.id, rows[rows.length - 1].id);
     await run(env, `UPDATE notifications SET read_at = ? WHERE user_id = ? AND dedupe_key = ? AND read_at IS NULL`, nowIso(), user.id, `msg:${f.id}`);
   }
-  const people = { [f.kid_a]: { id: f.kid_a, display_name: f.name_a, avatar: f.av_a }, [f.kid_b]: { id: f.kid_b, display_name: f.name_b, avatar: f.av_b } };
+  const people = { [f.kid_a]: { id: f.kid_a, display_name: f.name_a, avatar: f.av_a, code_name: f.code_a || null }, [f.kid_b]: { id: f.kid_b, display_name: f.name_b, avatar: f.av_b, code_name: f.code_b || null } };
   return json({ messages: rows, people, status: f.status, read_only: user.role === 'parent' || f.status !== 'active' });
 });
 
@@ -1051,6 +1054,51 @@ add('POST', '/api/chats/:id/messages', async ({ env, ctx, user, params, body }) 
     await notify(env, ctx, parents, { type: 'safety', title: `Please check in with ${firstName(user.display_name)}`, body: 'A recent chat message may mean they need support.', link: `kid:${user.id}` }, { sms: true });
   }
   return json({ ok: true, id: row.id, created_at: row.created_at });
+}, { role: 'kid' });
+
+
+// ---- walkie-talkie: short voice clips between approved friends. Parents of either kid can listen (voice can't be word-filtered).
+const VOICE_MIMES = { 'audio/webm': [0x1a, 0x45, 0xdf, 0xa3], 'audio/ogg': [0x4f, 0x67, 0x67, 0x53], 'audio/mp4': null, 'audio/aac': null, 'audio/mpeg': null, 'audio/x-m4a': null };
+add('POST', '/api/chats/:id/voice', async ({ env, ctx, request, user, params }) => {
+  const f = await friendshipFor(env, user, params.id);
+  if (f.status !== 'active') fail(403, 'You can only talk with approved friends');
+  if (!user.chat_enabled) fail(403, 'Chat is paused on your account. Talk to your parent.');
+  const otherId = f.kid_a === user.id ? f.kid_b : f.kid_a;
+  if (await isBlocked(env, user.id, otherId)) fail(403, "You can't message this person");
+  const mime = String(request.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (!(mime in VOICE_MIMES)) fail(415, "That recording type isn't supported");
+  const buf = new Uint8Array(await request.arrayBuffer());
+  if (buf.length < 200) fail(400, 'That recording was too short');
+  if (buf.length > 600 * 1024) fail(413, 'Walkie-talkie messages can be up to 15 seconds');
+  const magic = VOICE_MIMES[mime];
+  if (magic && !magic.every((b, i) => buf[i] === b)) fail(415, "That doesn't look like a recording");
+  if ((mime === 'audio/mp4' || mime === 'audio/x-m4a') && String.fromCharCode(...buf.slice(4, 8)) !== 'ftyp') fail(415, "That doesn't look like a recording");
+  const secs = Math.max(0.5, Math.min(16, Number(request.headers.get('x-duration')) || 1));
+  await rateLimit(env, 'voice:' + user.id, 20, 60e3, "Whoa, that's a lot of walkie-talkie messages! Take a breather.");
+  const clip = await first(env, 'INSERT INTO voice_clips (friendship_id, sender_id, mime, secs, data) VALUES (?, ?, ?, ?, ?) RETURNING id', f.id, user.id, mime, secs, buf);
+  const row = await first(env, 'INSERT INTO messages (friendship_id, sender_id, body, voice_id) VALUES (?, ?, ?, ?) RETURNING id, created_at', f.id, user.id, `📻 Walkie-talkie (${Math.round(secs)}s)`, clip.id);
+  await run(env, `INSERT INTO chat_reads (friendship_id, user_id, last_read_id) VALUES (?, ?, ?)
+    ON CONFLICT(friendship_id, user_id) DO UPDATE SET last_read_id = excluded.last_read_id`, f.id, user.id, row.id);
+  await notify(env, ctx, await usersById(env, [otherId]), { type: 'walkie', title: `📻 ${user.display_name}: walkie-talkie message`, body: 'Tap to listen', link: `chat:${f.id}`, dedupe: `msg:${f.id}` });
+  return json({ ok: true, id: row.id, voice_id: clip.id, created_at: row.created_at });
+}, { role: 'kid', raw: true });
+add('GET', '/api/voice/:id', async ({ env, user, params }) => {
+  const c = await first(env, 'SELECT id, friendship_id, mime, data FROM voice_clips WHERE id = ?', toInt(params.id));
+  if (!c) fail(404, 'This walkie-talkie message has expired');
+  await friendshipFor(env, user, c.friendship_id); // kid in the chat, or a parent of either kid
+  return new Response(new Uint8Array(c.data), { headers: { 'content-type': c.mime, 'cache-control': 'private, max-age=86400' } });
+});
+// ---- code names: each kid can give a friend a fun code name. Both kids see it; parents always see real names.
+add('POST', '/api/friends/:id/codename', async ({ env, ctx, user, params, body }) => {
+  const f = await friendshipFor(env, user, params.id);
+  if (f.status !== 'active') fail(403, 'You can only give code names to approved friends');
+  const name = str(body.name, 24);
+  if (name) { const problem = moderate(name); if (problem) fail(422, 'Pick a different code name'); if (MEAN_WORDS.test(name.replace(/[^a-z]/gi, ''))) fail(422, 'Pick a different code name'); }
+  await rateLimit(env, 'codename:' + user.id, 30, 3600e3, 'Too many code name changes — try again later.');
+  const col = f.kid_a === user.id ? 'code_b' : 'code_a', otherId = f.kid_a === user.id ? f.kid_b : f.kid_a;
+  await run(env, `UPDATE friendships SET ${col} = ? WHERE id = ?`, name || null, f.id);
+  if (name) await notify(env, ctx, await usersById(env, [otherId]), { type: 'codename', title: `🕵️ ${user.display_name} gave you a code name: “${name}”`, link: 'friends' });
+  return json({ ok: true, code_name: name || null });
 }, { role: 'kid' });
 
 // ================================================================ parent ↔ kid messages

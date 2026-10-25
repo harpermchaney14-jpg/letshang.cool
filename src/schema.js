@@ -113,5 +113,14 @@ export const MIGRATIONS = [
    "CREATE TABLE market_history ( sym TEXT NOT NULL, at TEXT NOT NULL, price REAL NOT NULL, PRIMARY KEY (sym, at) )",
    "CREATE TABLE market_meta ( key TEXT PRIMARY KEY, value TEXT NOT NULL )"
   ]
+ },
+ {
+  "name": "0011_walkie_codenames.sql",
+  "statements": [
+   "CREATE TABLE voice_clips ( id INTEGER PRIMARY KEY AUTOINCREMENT, friendship_id INTEGER NOT NULL REFERENCES friendships(id) ON DELETE CASCADE, sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, mime TEXT NOT NULL, secs REAL NOT NULL, data BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')) )",
+   "ALTER TABLE messages ADD COLUMN voice_id INTEGER",
+   "ALTER TABLE friendships ADD COLUMN code_a TEXT",
+   "ALTER TABLE friendships ADD COLUMN code_b TEXT"
+  ]
  }
 ];
