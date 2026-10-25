@@ -4,15 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>How Let's Hang Works — for parents</title>
-  <meta name="description" content="Let's Hang helps middle schoolers hang out safely — check-ins at friends' houses, pickup heads-ups, rain-day rides, and plans every parent confirms.">
+  <meta name="description" content="Let's Hang is the safe app for middle schoolers: hangouts with parents in the loop, 46 games with friends-only leaderboards, a walkie-talkie, and Future Me — career exploration, money skills and a real-stock market challenge.">
   <meta name="theme-color" content="#05070d">
   <meta property="og:title" content="Let's Hang — how it works">
-  <meta property="og:description" content="Check-ins, pickups, rides and plans for middle schoolers — with parents in the loop.">
+  <meta property="og:description" content="Hang out, play, talk and learn — with parents in the loop.">
   <meta property="og:image" content="https://letshang.cool/img/kid-home.webp">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="preload" href="/fonts/bangers.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="/site.css?v=2">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -33,8 +33,8 @@
     <div class="wrap hero-grid">
       <div>
         <span class="kicker">For middle schoolers + their parents</span>
-        <h1>Real friends.<br><span class="y">Good vibes.</span><br>Parents in the loop.</h1>
-        <p class="lead">Let's Hang is the app for after-school hangouts. Kids check in at a friend's house, make plans, chat with approved friends and ask for a ride when it's pouring. Parents get a heads-up for every bit of it — and nothing happens without a parent's OK.</p>
+        <h1>Hang out.<br><span class="y">Play.</span> Learn.<br>Parents in the loop.</h1>
+        <p class="lead">Let's Hang is the safe, all-in-one app for after school. Kids check in at friends' houses, make plans, chat and walkie-talkie with approved friends, play 46 games, and explore careers, money and the real stock market. Parents get a heads-up for the things that matter — and nothing social happens without a parent's OK.</p>
         <div class="cta-row">
           <a class="btn" href="/?signup">Create a parent account</a>
           <a class="btn alt" href="/guide">See the sign-up guide</a>
@@ -42,12 +42,25 @@
         <ul class="trust">
           <li>Kids can't sign up on their own</li>
           <li>Friends need both parents' OK</li>
+          <li>No ads · no in-app purchases</li>
           <li>Works on any phone — nothing to download</li>
         </ul>
       </div>
       <div class="phones" aria-hidden="true">
         <div class="phone tilt-l"><img src="/img/kid-home.webp" alt="" width="540" height="1169" fetchpriority="high"></div>
-        <div class="phone tilt-r"><img src="/img/parent-home.webp" alt="" width="540" height="1169" loading="lazy"></div>
+        <div class="phone tilt-r"><img src="/img/kid-games.webp" alt="" width="540" height="1169" loading="lazy"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- QUICK JUMP -->
+  <section class="jump-sec">
+    <div class="wrap">
+      <div class="pillars">
+        <a class="pillar p-cyan" href="#hang"><span>🏠</span><b>Hang out</b><small>Check-ins, pickups, rides, plans</small></a>
+        <a class="pillar p-pink" href="#talk"><span>📻</span><b>Talk</b><small>Chat, walkie-talkie, code names</small></a>
+        <a class="pillar p-yellow" href="#play"><span>🎮</span><b>Play</b><small>46 games + leaderboards</small></a>
+        <a class="pillar p-green" href="#learn"><span>🚀</span><b>Learn</b><small>Careers, money, stock market</small></a>
       </div>
     </div>
   </section>
@@ -60,17 +73,17 @@
       <ol class="steps">
         <li><h3>Parent signs up</h3><p>Create your parent account on your phone. Add a second parent or guardian if you like.</p></li>
         <li><h3>Add your kid</h3><p>You make your kid's account and pick their sign-in PIN. You agree to the rules for them.</p></li>
-        <li><h3>Friends + approvals</h3><p>Kids swap a private friend code. Both kids' parents approve before they can chat or make plans.</p></li>
-        <li><h3>Hang out!</h3><p>Check in at a friend's house, make plans, ask for rides — parents get notified every step.</p></li>
+        <li><h3>Friends + approvals</h3><p>Kids swap a private friend code. Both kids' parents approve before they can chat, play together or make plans.</p></li>
+        <li><h3>Hang, play, learn!</h3><p>Check-ins, rides, games, Future Me — with parents notified for the important stuff.</p></li>
       </ol>
       <p style="margin-top:22px"><a href="/guide">Read the full step-by-step guide →</a></p>
     </div>
   </section>
 
-  <!-- FEATURES -->
-  <section id="features">
+  <!-- HANG OUT -->
+  <section id="hang">
     <div class="wrap">
-      <h2 class="sec-title pink">What it does</h2><span class="swoosh"></span>
+      <div class="group-head"><span class="group-em">🏠</span><h2 class="sec-title cyan">Hang out — safely</h2></div><span class="swoosh"></span>
 
       <div class="feature">
         <div>
@@ -83,7 +96,7 @@
             <li>Only at your own house or an approved friend's house</li>
           </ul>
         </div>
-        <div class="phone crop"><img src="/img/kid-host.webp" alt="The host screen listing Sam, Zoe and Maya checked in at The Lee House, each with a Check out button" width="540" height="1169" loading="lazy"></div>
+        <div class="phone crop"><img src="/img/kid-host.webp" alt="The host screen listing kids checked in at The Lee House, each with a Check out button" width="540" height="1169" loading="lazy"></div>
       </div>
 
       <div class="feature flip">
@@ -96,7 +109,7 @@
             <li>They tap "Got it" so you know they saw it</li>
           </ul>
         </div>
-        <div class="phone crop"><img src="/img/kid-alert.webp" alt="A pop-up alert on the kid's phone: Kim is on the way, about 10 minutes, grab your backpack" width="540" height="1169" loading="lazy"></div>
+        <div class="phone crop"><img src="/img/kid-alert.webp" alt="A pop-up alert on the kid's phone: Kim is on the way, about 10 minutes" width="540" height="1169" loading="lazy"></div>
       </div>
 
       <div class="feature">
@@ -107,50 +120,151 @@
           <ul>
             <li>Every rider's parents get the request at once</li>
             <li>First parent to tap <b>"I've got it!"</b> drives — everyone else is told</li>
-            <li>Can't make it after all? Tap once and the others are asked again</li>
           </ul>
         </div>
-        <div class="phone crop"><img src="/img/parent-ride.webp" alt="A parent's screen showing a rainy-day pickup request for Maya and Zoe with an I've got it button" width="540" height="1169" loading="lazy"></div>
+        <div class="phone crop"><img src="/img/parent-ride.webp" alt="A parent's screen showing a rainy-day pickup request with an I've got it button" width="540" height="1169" loading="lazy"></div>
       </div>
 
       <div class="feature flip">
         <div>
-          <span class="tag t-pink">Plans</span>
+          <span class="tag t-pink">Plans + parent messages</span>
           <h3>Every parent confirms the plan</h3>
-          <p>Kids (or parents) make a plan — pizza and a movie on Friday, the skate park on Saturday. Each kid's parent taps <b>✓ Confirm</b>, and the plan only goes on the calendar once everyone has.</p>
+          <p>Kids (or parents) make a plan — pizza and a movie on Friday, the skate park on Saturday. Each kid's parent taps <b>✓ Confirm</b>, and the plan only goes on the calendar once everyone has. Message the other parents right from the plan.</p>
           <ul>
             <li>See exactly who's confirmed: "✓ Sam: confirmed by Kim"</li>
-            <li>Message the other parents right from the plan</li>
+            <li>The school calendar is built in — breaks and days off are marked</li>
           </ul>
         </div>
-        <div class="phone crop"><img src="/img/parent-approvals.webp" alt="The Approvals screen with a Pizza and movie night plan, showing who has confirmed and Confirm and Decline buttons" width="540" height="1169" loading="lazy"></div>
+        <div class="phone crop"><img src="/img/parent-approvals.webp" alt="The Approvals screen with a plan, who has confirmed, and Confirm and Decline buttons" width="540" height="1169" loading="lazy"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- TALK -->
+  <section id="talk">
+    <div class="wrap">
+      <div class="group-head"><span class="group-em">📻</span><h2 class="sec-title pink">Talk — approved friends only</h2></div><span class="swoosh"></span>
 
       <div class="feature">
         <div>
-          <span class="tag t-green">Parent messages</span>
-          <h3>Talk to the other parents</h3>
-          <p>Message your co-parent and the parents of your kid's approved friends — to sort out drop-offs, pickups and sleepovers without hunting for phone numbers.</p>
+          <span class="tag t-pink">Chat + walkie-talkie</span>
+          <h3>Push-to-talk with real friends</h3>
+          <p>One-to-one chat with friends both parents approved — plus a <b>walkie-talkie</b>: hold the 📻 button, talk, let go to send. Friends hear a beep and it plays right away.</p>
+          <ul>
+            <li>Up to 15 seconds per clip — fun, not endless</li>
+            <li><b>Parents can listen to every clip</b> and read every message</li>
+            <li>Clips delete themselves after 30 days</li>
+          </ul>
         </div>
-        <div class="phone crop"><img src="/img/parent-chat.webp" alt="A message thread between two parents arranging a drop-off" width="540" height="1169" loading="lazy"></div>
+        <div class="phone crop"><img src="/img/kid-walkie.webp" alt="A chat with texts and two walkie-talkie voice messages" width="540" height="1169" loading="lazy"></div>
       </div>
 
       <div class="feature flip">
         <div>
-          <span class="tag t-yellow">School calendar + walk weather</span>
-          <h3>Knows when there's no school</h3>
-          <p>The 2026–27 Sioux Falls school calendar is built in — breaks, holidays and inservice days are marked, and the walk times skip days off. Each morning and afternoon shows the walk weather and what to wear.</p>
+          <span class="tag t-yellow">Code names</span>
+          <h3>Agent Taco, reporting for duty 🕵️</h3>
+          <p>Friends can give each other secret code names like "Major Unicorn" — it shows up in their friend list and chats. Just for fun between friends.</p>
+          <ul>
+            <li>Code names go through the same bad-word filter as chat</li>
+            <li>Parents always see real names</li>
+          </ul>
         </div>
-        <div class="phone crop"><img src="/img/parent-calendar.webp" alt="The calendar for October 2026 with no-school days striped and the end of the quarter circled" width="540" height="1169" loading="lazy"></div>
+        <div class="phone crop"><img src="/img/kid-codenames.webp" alt="The friends list showing a friend's code name, Agent Taco, with their real name underneath" width="540" height="1169" loading="lazy"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PLAY -->
+  <section id="play">
+    <div class="wrap">
+      <div class="group-head"><span class="group-em">🎮</span><h2 class="sec-title">Play — 46 games</h2></div><span class="swoosh"></span>
+      <p class="sec-lead">No ads, no in-app purchases, no strangers — just games. Everything is grouped so kids can find their thing.</p>
+
+      <div class="cat-cards">
+        <div class="card"><div class="em">🧠</div><h3>Mind Benders</h3><p>High-school-level challenges for gifted kids: Brain Teasers, Algebra &amp; Geometry, Science Lab, Word Wizard, History &amp; Civics, Pattern Pro, Math Blitz Pro.</p></div>
+        <div class="card"><div class="em">🕹️</div><h3>Arcade</h3><p>2048, Snake, Whack-a-Mole, Balloon Pop, Color Challenge, Typing Race, Simon Says, Reaction Time, Math Blitz.</p></div>
+        <div class="card"><div class="em">🧩</div><h3>Puzzles</h3><p>Minesweeper, Connect Four, Sudoku, Lights Out, Slide Puzzle, Code Breaker, Guess the Word, Word Scramble, Memory, Tic-Tac-Toe and more.</p></div>
+        <div class="card"><div class="em">❓</div><h3>Quizzes</h3><p>Trivia, Flags, World Capitals, Animals, Space, Sports, Riddles, Spelling Bee, True or False, Emoji Movie Guess…</p></div>
       </div>
 
       <div class="feature">
         <div>
-          <span class="tag t-pink">Chat</span>
-          <h3>Chat — approved friends only</h3>
-          <p>One-to-one chat with friends both parents have approved. Strangers can't find or message your kid. You can read your kid's chats any time.</p>
+          <span class="tag t-yellow">Leaderboards</span>
+          <h3>Who's on top?</h3>
+          <p>Every scored game has a leaderboard — plus an <b>all-in-one board</b> across every game (🥇 3 pts, 🥈 2, 🥉 1). Kids only ever compete with <b>themselves and their approved friends</b>.</p>
+          <ul>
+            <li>No public rankings — strangers never see your kid's scores</li>
+            <li>Impossible scores are rejected by the server</li>
+          </ul>
         </div>
-        <div class="phone crop"><img src="/img/kid-chat.webp" alt="A chat between Maya and Sam about studying together" width="540" height="1169" loading="lazy"></div>
+        <div class="phone crop"><img src="/img/kid-leaders.webp" alt="The all-in-one leaderboard ranking four friends by medal points" width="540" height="1169" loading="lazy"></div>
+      </div>
+
+      <div class="feature flip">
+        <div>
+          <span class="tag t-cyan">Play a friend</span>
+          <h3>Sea Battle + Word Duel</h3>
+          <p>Challenge an approved friend to <b>Sea Battle</b> (take turns hunting each other's hidden ships) or <b>Word Duel</b> (pick a secret word for each other — fewest misses wins). The app pings you when it's your turn.</p>
+          <ul>
+            <li>Approved friends only — same rule as chat</li>
+            <li>Secret words come from a built-in kid-safe list</li>
+          </ul>
+        </div>
+        <div class="phone crop"><img src="/img/kid-seabattle.webp" alt="A Sea Battle game in progress with hits and misses on the enemy board" width="540" height="1169" loading="lazy"></div>
+      </div>
+
+      <div class="minis">
+        <div class="phone crop"><img src="/img/kid-mindbender.webp" alt="An Algebra and Geometry question: what is 2 to the 5th? Answer 32" width="540" height="1169" loading="lazy"></div>
+        <div class="phone crop"><img src="/img/kid-2048.webp" alt="A game of 2048 in progress" width="540" height="1169" loading="lazy"></div>
+        <div class="phone crop"><img src="/img/kid-games.webp" alt="The Games tab with Leaderboards, Play a friend and game categories" width="540" height="1169" loading="lazy"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LEARN -->
+  <section id="learn">
+    <div class="wrap">
+      <div class="group-head"><span class="group-em">🚀</span><h2 class="sec-title green">Learn — Future Me</h2></div><span class="swoosh"></span>
+      <p class="sec-lead">Short, middle-school-friendly lessons with quick quizzes, badges and tools they can actually play with. Kids go at their own pace.</p>
+
+      <div class="feature">
+        <div>
+          <span class="tag t-green">Career Quiz + Career Path</span>
+          <h3>What could the future you be?</h3>
+          <p>A 36-question <b>career interest inventory</b> gives kids their interest code — like <i>Thinker · Doer · Creator</i> — with careers to explore, the training each one needs, classes they might love and clubs to try now.</p>
+          <ul>
+            <li>5 career-planning lessons: paths after high school (college, trade school, apprenticeships, military), skills employers want, SMART goals</li>
+            <li><b>My Career Plan</b> they can fill in and print</li>
+          </ul>
+        </div>
+        <div class="phone crop"><img src="/img/kid-career.webp" alt="Career quiz results showing the interest code and bars for all six interest areas" width="540" height="1169" loading="lazy"></div>
+      </div>
+
+      <div class="feature flip">
+        <div>
+          <span class="tag t-yellow">Money Smarts + Loan Lab</span>
+          <h3>How money really works</h3>
+          <p>10 lessons: earning and taxes, needs vs. wants, budgeting, saving and compound interest, banks, debit vs. credit, credit scores, smart shopping, scams — and <b>finance charges</b> on cars, homes and student loans.</p>
+          <ul>
+            <li><b>Loan Lab:</b> slide the price, down payment, rate and years — see the monthly payment and total interest (15 vs. 30-year mortgage!)</li>
+            <li>Budget Builder, Savings Goal, Money Grower, Credit Card Cost, Needs vs. Wants game</li>
+          </ul>
+        </div>
+        <div class="phone crop"><img src="/img/kid-loan.webp" alt="The Loan Lab with a $300,000 home, 20% down, 6.5% rate and 30 years, showing the monthly payment and finance charge" width="540" height="1169" loading="lazy"></div>
+      </div>
+
+      <div class="feature">
+        <div>
+          <span class="tag t-cyan">Stock Market + Stock Challenge</span>
+          <h3>The real stock market — with play money</h3>
+          <p>7 lessons on supply and demand, free enterprise and capitalism, what a stock is, why prices move, indexes, bull and bear markets, dividends and diversifying. Then kids get <b>$10,000 of play money</b> to trade <b>real companies at real prices</b> — Apple, Roblox, Disney, Nike, McDonald's and more, plus an S&amp;P 500 index fund.</p>
+          <ul>
+            <li>Live ticker · trades only while the real market is open</li>
+            <li>Compete with approved friends on a portfolio leaderboard</li>
+            <li><b>It's pretend money</b> — nothing real is bought or sold</li>
+          </ul>
+        </div>
+        <div class="phone crop"><img src="/img/kid-stocks.webp" alt="The Stock Challenge with a live ticker, a $10,000 portfolio and holdings in Disney, Nike, Roblox and an S&P 500 fund" width="540" height="1169" loading="lazy"></div>
       </div>
     </div>
   </section>
@@ -162,14 +276,14 @@
       <p class="sec-lead">Every rule is checked on our server — not just hidden in the app.</p>
       <div class="cards">
         <div class="card"><div class="em">🔐</div><h3>Parents create kid accounts</h3><p>Kids can't sign themselves up. A parent creates the account and agrees to the rules.</p></div>
-        <div class="card"><div class="em">🤝</div><h3>Two-parent friend approval</h3><p>Friends connect with a private code, then <b>both</b> kids' parents approve before anything else is possible.</p></div>
-        <div class="card"><div class="em">👀</div><h3>Parents can read chats</h3><p>Your kid's chats are visible to you, and you can pause chat any time.</p></div>
-        <div class="card"><div class="em">🚫</div><h3>No personal info in chat</h3><p>Phone numbers, emails, street addresses, links and mean words are blocked automatically.</p></div>
+        <div class="card"><div class="em">🤝</div><h3>Two-parent friend approval</h3><p>Friends connect with a private code, then <b>both</b> kids' parents approve before chat, games together or plans.</p></div>
+        <div class="card"><div class="em">👀</div><h3>Parents see + hear it all</h3><p>Read your kid's chats, listen to their walkie-talkie clips, and pause chat any time.</p></div>
+        <div class="card"><div class="em">🚫</div><h3>No personal info in chat</h3><p>Phone numbers, emails, addresses, links and mean words are blocked automatically — in chat and code names.</p></div>
+        <div class="card"><div class="em">🏆</div><h3>Friends-only leaderboards</h3><p>Game scores and stock portfolios are only shared with approved friends. No public rankings.</p></div>
+        <div class="card"><div class="em">💸</div><h3>No ads, no purchases</h3><p>No ads, no in-app purchases, no loot boxes. The stock challenge uses play money only.</p></div>
         <div class="card"><div class="em">💛</div><h3>Help when it matters</h3><p>If a message suggests a kid might hurt themselves, their parent is alerted right away.</p></div>
         <div class="card"><div class="em">🛡️</div><h3>Block + report</h3><p>Kids can block or report anyone in one tap, and their parent sees every report.</p></div>
-        <div class="card"><div class="em">🦄</div><h3>No photos</h3><p>Kids pick a fun preset avatar — no photo uploads, no profile pictures.</p></div>
-        <div class="card"><div class="em">📍</div><h3>No GPS tracking</h3><p>Let's Hang never tracks location. Kids check in to a house by name.</p></div>
-        <div class="card"><div class="em">🧹</div><h3>Old data cleaned up</h3><p>Old alerts are deleted after 60 days and old messages after a year.</p></div>
+        <div class="card"><div class="em">📍</div><h3>No photos, no GPS</h3><p>Kids pick a fun avatar — no photo uploads. Let's Hang never tracks location.</p></div>
       </div>
     </div>
   </section>
@@ -190,12 +304,16 @@
   <section id="faq" class="faq">
     <div class="wrap">
       <h2 class="sec-title">Questions</h2><span class="swoosh"></span>
-      <details><summary>Does my kid need their own phone?</summary><div>It helps, but it isn't required. Let's Hang works in the web browser on any phone, tablet or computer — kids can sign in on a family iPad, a friend's house computer, or their own phone.</div></details>
+      <details><summary>Does my kid need their own phone?</summary><div>It helps, but it isn't required. Let's Hang works in the web browser on any phone, tablet or computer.</div></details>
       <details><summary>Do I need to download an app?</summary><div>No. Just go to <b>letshang.cool</b>. On iPhone you can add it to your Home Screen so it opens like an app — the <a href="/guide#home-screen">guide shows how</a>.</div></details>
       <details><summary>Can kids sign up by themselves?</summary><div>No. Only a parent or guardian can create a kid's account, and they agree to the rules when they do.</div></details>
-      <details><summary>Who can message my kid?</summary><div>Only friends that both you and the other kid's parent approved. There's no search, no public profiles, and no way for strangers to find your kid.</div></details>
-      <details><summary>Who can message me?</summary><div>Your co-parent, and the parents of your kid's approved friends. Kids can't use parent messages.</div></details>
-      <details><summary>Will I get text messages?</summary><div>Only if you turn them on. You can get texts for approvals, check-ins, pickups, ride requests and "I'm Ready!" — reply STOP any time. Everything also shows in the app with an alert sound.</div></details>
+      <details><summary>Who can message, walkie-talkie or play with my kid?</summary><div>Only friends that both you and the other kid's parent approved. There's no search, no public profiles, and no way for strangers to find your kid.</div></details>
+      <details><summary>Can I hear the walkie-talkie messages?</summary><div>Yes. Open <b>Home → your kid → Friends &amp; safety</b> and open a chat — voice clips have a ▶️ play button, just like your kid sees. Clips are deleted after 30 days.</div></details>
+      <details><summary>Is the stock market real money?</summary><div>No. Every kid gets $10,000 of <b>play money</b>. The stock prices are real (from the U.S. market, slightly delayed), so it feels real — but nothing is actually bought or sold, and no money ever changes hands.</div></details>
+      <details><summary>Do the games cost anything or have ads?</summary><div>No. There are no ads, no in-app purchases and no loot boxes anywhere in Let's Hang.</div></details>
+      <details><summary>Is the career quiz a test?</summary><div>No — it's an interest inventory about what your kid <i>enjoys</i>. There are no wrong answers, and results are meant to spark conversations. Their plan and results are saved on their own device.</div></details>
+      <details><summary>Who can see my kid's game scores?</summary><div>Only your kid and their approved friends. Leaderboards are never public.</div></details>
+      <details><summary>Will I get text messages?</summary><div>Only if you turn them on. You can get texts for approvals, check-ins, pickups, ride requests and "I'm Ready!" — reply STOP any time.</div></details>
       <details><summary>Why don't I hear alert sounds?</summary><div>Sounds play while Let's Hang is open. Make sure your iPhone's side ringer switch is on and the volume is up, and tap the screen once after opening the app. A big pop-up shows for every alert even on silent.</div></details>
       <details><summary>Can two parents share one family?</summary><div>Yes. Add a second parent or guardian from <b>Account → Family</b>. Each gets their own sign-in and alerts.</div></details>
     </div>

@@ -172,3 +172,20 @@ footer a { color: var(--dim); }
 .daily td:first-child { width: 42%; font-weight: 800; color: #fff; padding-right: 10px; }
 
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .phone.tilt-l, .phone.tilt-r, .kicker, .gnum, .steps li::before { transform: none; } }
+
+/* ===== v2: pillars, group heads, category cards, mini phones ===== */
+.jump-sec { padding: 6px 0 10px; }
+.pillars { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+@media (min-width: 760px) { .pillars { grid-template-columns: repeat(4, 1fr); } }
+.pillar { display: flex; flex-direction: column; gap: 2px; padding: 16px; border-radius: var(--r); background: #12002b; border: 3px solid var(--c); box-shadow: 5px 6px 0 #000; text-decoration: none; color: var(--ink); }
+.pillar span { font-size: 34px; line-height: 1; } .pillar b { font-family: var(--display); font-weight: 400; font-size: 30px; color: var(--c); letter-spacing: .5px; } .pillar small { color: var(--dim); font-size: 14px; font-weight: 700; }
+.p-cyan { --c: var(--cyan); } .p-pink { --c: var(--pink); } .p-yellow { --c: var(--yellow); } .p-green { --c: var(--green); }
+.group-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.group-em { font-size: 44px; line-height: 1; }
+section[id] { scroll-margin-top: 70px; }
+.cat-cards { display: grid; gap: 14px; margin-bottom: 10px; }
+@media (min-width: 640px) { .cat-cards { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 960px) { .cat-cards { grid-template-columns: repeat(4, 1fr); } }
+.cat-cards .card:nth-child(1) { border-color: var(--orange); } .cat-cards .card:nth-child(2) { border-color: var(--pink); } .cat-cards .card:nth-child(3) { border-color: var(--cyan); } .cat-cards .card:nth-child(4) { border-color: var(--yellow); }
+.minis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-top: 22px; border-top: 2px dashed rgba(255, 255, 255, .12); }
+.minis .phone { max-width: 230px; margin: 0 auto; padding: 5px; border-radius: 22px; } .minis .phone img { border-radius: 17px; }
