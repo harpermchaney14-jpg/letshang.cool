@@ -247,3 +247,5 @@ html[data-theme="pastel"] body.alert-flash::after { box-shadow: inset 0 0 0 6px 
 html[data-theme="pastel"] .confirm-list .cf-approved { color: var(--p-mint-d); }
 html[data-theme="pastel"] .confirm-list .cf-declined { color: #b8326f; }
 html[data-theme="pastel"] .confirm-list .cf-waiting { color: #a07400; }
+html[data-theme="pastel"] .howto-link { color: var(--p-lav-d); border-color: var(--p-lav); background: rgba(255,255,255,.6); }
+html[data-theme="pastel"] .howto-link b { color: var(--p-ink); }

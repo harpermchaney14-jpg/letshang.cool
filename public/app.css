@@ -773,3 +773,5 @@ body.alert-flash::after { content: ''; position: fixed; inset: 0; z-index: 89; p
 .confirm-list .cf-approved { color: var(--green); }
 .confirm-list .cf-declined { color: var(--pink); }
 .confirm-list .cf-waiting { color: var(--yellow); }
+.howto-link { display: block; margin: 14px auto 0; padding: 12px 16px; text-align: center; font-weight: 800; color: var(--cyan); text-decoration: none; border: 2px dashed rgba(0, 234, 255, .5); border-radius: 16px; }
+.howto-link b { color: #fff; }

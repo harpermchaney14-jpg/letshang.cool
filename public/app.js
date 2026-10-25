@@ -419,13 +419,14 @@
           <span class="action-icon" aria-hidden="true">🧢</span><span class="action-label">I'm a kid<span class="action-arrow" aria-hidden="true">→</span></span></button>
       </div>
       ${form}
+      <a class="howto-link" href="/how-it-works">👀 New here? <b>See how Let's Hang works</b> →</a>
       <div class="auth-style">${stylePicker()}</div>
     </div>`;
   }
   function renderSignup() {
     return `<form class="panel stack" data-form="signup" autocomplete="on">
       <h2>Create a parent account</h2>
-      <p class="small muted">You'll create your kid's account next — kids can't sign up on their own.</p>
+      <p class="small muted">You'll create your kid's account next — kids can't sign up on their own. <a class="linkish" href="/guide">Step-by-step guide</a></p>
       <label class="fld"><span>Your name</span><input class="field" name="name" autocomplete="name" required></label>
       <label class="fld"><span>Username</span><input class="field" name="username" autocomplete="username" autocapitalize="none" required></label>
       <label class="fld"><span>Password (8+ characters)</span><input class="field" name="password" type="password" autocomplete="new-password" minlength="8" required></label>
@@ -1702,6 +1703,12 @@
 
   // ================================================================ boot
   applyTheme(store.get('lh_theme', 'neon'));
+  // Links from the promo page: /?signup opens parent sign-up, /?parent opens parent sign-in.
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.has('signup') || q.has('parent')) { S.door = 'parent'; S.authMode = q.has('signup') ? 'signup' : 'login'; history.replaceState(null, '', '/'); }
+    if (q.has('kid')) { S.door = 'kid'; S.authMode = 'login'; history.replaceState(null, '', '/'); }
+  } catch { /* old browser */ }
   async function boot() {
     try { await refreshMe(); } catch { S.me = null; render(); return; }
     S.tab = 'home'; S.view = null; S.onboardStep = 0;
