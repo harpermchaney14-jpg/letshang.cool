@@ -91,5 +91,27 @@ export const MIGRATIONS = [
    "CREATE INDEX parent_messages_pair ON parent_messages (from_id, to_id, id)",
    "CREATE INDEX parent_messages_unread ON parent_messages (to_id, read_at)"
   ]
+ },
+ {
+  "name": "0009_games.sql",
+  "statements": [
+   "CREATE TABLE game_scores ( kid_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, game TEXT NOT NULL, best REAL NOT NULL, plays INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), PRIMARY KEY (kid_id, game) )",
+   "CREATE INDEX game_scores_game ON game_scores (game, best)",
+   "CREATE TABLE matches ( id INTEGER PRIMARY KEY AUTOINCREMENT, game TEXT NOT NULL CHECK (game IN ('seabattle','wordduel')), p1 INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, p2 INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited','active','done','declined')), turn INTEGER, winner INTEGER, waiting_on TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')) )",
+   "CREATE INDEX matches_p1 ON matches (p1, updated_at)",
+   "CREATE INDEX matches_p2 ON matches (p2, updated_at)"
+  ]
+ },
+ {
+  "name": "0010_market.sql",
+  "statements": [
+   "CREATE TABLE market_accounts ( kid_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, cash REAL NOT NULL DEFAULT 10000, started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), resets INTEGER NOT NULL DEFAULT 0 )",
+   "CREATE TABLE market_holdings ( kid_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, symbol TEXT NOT NULL, shares INTEGER NOT NULL, cost REAL NOT NULL, PRIMARY KEY (kid_id, symbol) )",
+   "CREATE TABLE market_trades ( id INTEGER PRIMARY KEY AUTOINCREMENT, kid_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, symbol TEXT NOT NULL, side TEXT NOT NULL CHECK (side IN ('buy','sell')), shares INTEGER NOT NULL, price REAL NOT NULL, at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')) )",
+   "CREATE INDEX market_trades_kid ON market_trades (kid_id, id)",
+   "CREATE TABLE market_quotes ( sym TEXT PRIMARY KEY, price REAL NOT NULL, prev_close REAL, open REAL, high REAL, low REAL, quote_time INTEGER, fetched_at TEXT NOT NULL )",
+   "CREATE TABLE market_history ( sym TEXT NOT NULL, at TEXT NOT NULL, price REAL NOT NULL, PRIMARY KEY (sym, at) )",
+   "CREATE TABLE market_meta ( key TEXT PRIMARY KEY, value TEXT NOT NULL )"
+  ]
  }
 ];

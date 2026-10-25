@@ -206,6 +206,7 @@ export default {
       env.DB.prepare('DELETE FROM sms_log WHERE created_at < ?').bind(ago(90 * 864e5)),
       env.DB.prepare('DELETE FROM rides WHERE starts_at < ?').bind(ago(90 * 864e5)),
     ]);
+    await pruneMarket(env).catch(() => {});
   },
 };
 
@@ -288,7 +289,7 @@ add('POST', '/api/recover', async ({ env, request, body }) => {
 
 async function badgeCounts(env, user) {
   const n = await first(env, 'SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL', user.id);
-  let messages = 0, approvals = 0, rides = 0, pmsgs = 0;
+  let messages = 0, approvals = 0, rides = 0, pmsgs = 0, games = 0;
   if (user.role === 'kid') {
     const m = await first(env,
       `SELECT COUNT(*) AS n FROM messages m JOIN friendships f ON f.id = m.friendship_id
@@ -296,6 +297,7 @@ async function badgeCounts(env, user) {
         WHERE f.status = 'active' AND (f.kid_a = ? OR f.kid_b = ?) AND m.sender_id != ? AND m.id > COALESCE(r.last_read_id, 0)`,
       user.id, user.id, user.id, user.id);
     messages = m.n;
+    games = (await first(env, `SELECT COUNT(*) AS n FROM matches WHERE (p1 = ?1 OR p2 = ?1) AND status IN ('invited','active') AND waiting_on LIKE ?2`, user.id, `%,${user.id},%`)).n;
   } else {
     const a = await first(env,
       `SELECT (SELECT COUNT(*) FROM friendships f JOIN users a ON a.id = f.kid_a JOIN users b ON b.id = f.kid_b
@@ -315,7 +317,7 @@ async function badgeCounts(env, user) {
   const fm = await first(env, 'SELECT COUNT(*) AS n FROM family_messages WHERE to_id = ? AND read_at IS NULL', user.id);
   // Newest notification — the app plays a sound when this id goes up.
   const latest = await first(env, 'SELECT id, type, title, body, link FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1', user.id);
-  return { notifications: n.n, messages, approvals, rides, parent_messages: pmsgs, family_messages: fm.n, latest_id: latest?.id || 0, latest_type: latest?.type || null,
+  return { notifications: n.n, messages, approvals, rides, games, parent_messages: pmsgs, family_messages: fm.n, latest_id: latest?.id || 0, latest_type: latest?.type || null,
     latest_title: latest?.title || null, latest_body: latest?.body || null, latest_link: latest?.link || null };
 }
 
@@ -516,6 +518,377 @@ add('GET', '/api/friends', async ({ env, user, url }) => {
   const kid = user.role === 'kid' ? user : await ownKid(env, user, url.searchParams.get('kid_id'));
   return json(await friendsView(env, kid.id));
 });
+
+// ================================================================ game leaderboards (kid + approved friends only)
+// dir: 'high' = bigger is better, 'low' = smaller is better. min/max reject impossible scores.
+const GAMES = {
+  memory: ['low', 6, 500], ttt: ['high', 0, 1e5], simon: ['high', 0, 200], react: ['low', 80, 5000], trivia: ['high', 0, 10], emoji: ['high', 0, 10], scramble: ['high', 0, 1000],
+  math: ['high', 0, 300], flags: ['high', 0, 10], capitals: ['high', 0, 10], animals: ['high', 0, 10], space: ['high', 0, 10], sports: ['high', 0, 10], riddles: ['high', 0, 10],
+  truefalse: ['high', 0, 10], food: ['high', 0, 10], oddone: ['high', 0, 10], nextup: ['high', 0, 10], spelling: ['high', 0, 10],
+  g2048: ['high', 0, 1e7], snake: ['high', 0, 2000], whack: ['high', 0, 300], mines: ['low', 3, 1e5], wordguess: ['high', 0, 1000], connect4: ['high', 0, 1e5],
+  rps: ['high', 0, 500], hilo: ['high', 0, 500], codebreak: ['low', 1, 10], lights: ['low', 1, 1e4], slide: ['low', 1, 1e5], stroop: ['high', 0, 200],
+  typing: ['high', 0, 250], numguess: ['low', 1, 100], balloon: ['high', 0, 500], sudoku: ['low', 5, 1e5],
+  brainteasers: ['high', 0, 10], algebra: ['high', 0, 10], science: ['high', 0, 10], vocab: ['high', 0, 10], history: ['high', 0, 10], sequences: ['high', 0, 10], mathpro: ['high', 0, 300],
+};
+async function gameGroup(env, kidId) {
+  const rows = await all(env, `SELECT CASE WHEN f.kid_a = ?1 THEN f.kid_b ELSE f.kid_a END AS id FROM friendships f
+    WHERE (f.kid_a = ?1 OR f.kid_b = ?1) AND f.status = 'active'
+      AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = ?1 AND b.blocked_id = CASE WHEN f.kid_a = ?1 THEN f.kid_b ELSE f.kid_a END)
+                                            OR (b.blocked_id = ?1 AND b.blocker_id = CASE WHEN f.kid_a = ?1 THEN f.kid_b ELSE f.kid_a END))`, kidId);
+  return [kidId, ...rows.map((r) => r.id)];
+}
+add('POST', '/api/games/score', async ({ env, user, body }) => {
+  const g = GAMES[body.game]; if (!g) fail(400, 'Unknown game');
+  const score = Number(body.score);
+  if (!Number.isFinite(score) || score < g[1] || score > g[2]) fail(400, 'That score looks off');
+  await rateLimit(env, 'gamescore:' + user.id, 300, 3600e3, 'Slow down a little!');
+  const better = g[0] === 'high' ? 'excluded.best > game_scores.best' : 'excluded.best < game_scores.best';
+  await run(env, `INSERT INTO game_scores (kid_id, game, best) VALUES (?, ?, ?)
+    ON CONFLICT (kid_id, game) DO UPDATE SET plays = game_scores.plays + 1,
+      updated_at = CASE WHEN ${better} THEN excluded.updated_at ELSE game_scores.updated_at END,
+      best = CASE WHEN ${better} THEN excluded.best ELSE game_scores.best END`, user.id, body.game, score);
+  return json({ ok: true });
+}, { role: 'kid' });
+add('GET', '/api/games/leaderboard', async ({ env, user }) => {
+  const group = await gameGroup(env, user.id);
+  const rows = await all(env, `SELECT s.kid_id, s.game, s.best, s.plays, s.updated_at, u.display_name, u.avatar FROM game_scores s JOIN users u ON u.id = s.kid_id
+    WHERE s.kid_id IN (${group.map(() => '?').join(',')})`, ...group);
+  const games = {}, overall = new Map();
+  for (const id of group) overall.set(id, { kid_id: id, points: 0, gold: 0, silver: 0, bronze: 0, played: 0 });
+  for (const [game, [dir]] of Object.entries(GAMES)) {
+    const list = rows.filter((r) => r.game === game).sort((a, b) => (dir === 'high' ? b.best - a.best : a.best - b.best) || a.updated_at.localeCompare(b.updated_at));
+    if (!list.length) continue;
+    games[game] = list.slice(0, 20).map((r, i) => ({ rank: i + 1, kid_id: r.kid_id, name: r.display_name, avatar: r.avatar, score: r.best, me: r.kid_id === user.id }));
+    list.forEach((r, i) => {
+      const o = overall.get(r.kid_id); o.played++;
+      if (i < 3) { o.points += 3 - i; o[['gold', 'silver', 'bronze'][i]]++; }
+    });
+  }
+  const people = new Map(rows.map((r) => [r.kid_id, r]));
+  const me = await first(env, 'SELECT display_name, avatar FROM users WHERE id = ?', user.id);
+  const board = [...overall.values()].filter((o) => o.played || o.kid_id === user.id)
+    .map((o) => ({ ...o, name: (people.get(o.kid_id) || me).display_name, avatar: (people.get(o.kid_id) || me).avatar, me: o.kid_id === user.id }))
+    .sort((a, b) => b.points - a.points || b.gold - a.gold || b.played - a.played);
+  board.forEach((o, i) => { o.rank = i + 1; });
+  return json({ games, overall: board, friends: group.length - 1 });
+}, { role: 'kid' });
+
+// ================================================================ two-player games: Sea Battle + Word Duel (approved friends only)
+const SEA = 8, FLEET = [4, 3, 3, 2, 2];
+function placeFleet() {
+  const taken = new Set(), ships = [];
+  for (const len of FLEET) {
+    for (let tries = 0; tries < 500; tries++) {
+      const across = Math.random() < 0.5, r = Math.floor(Math.random() * (across ? SEA : SEA - len + 1)), c = Math.floor(Math.random() * (across ? SEA - len + 1 : SEA));
+      const cells = Array.from({ length: len }, (_, i) => (across ? r * SEA + c + i : (r + i) * SEA + c));
+      // keep a one-square gap so ships never touch
+      const near = (x) => { const xr = Math.floor(x / SEA), xc = x % SEA; for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) { const rr = xr + dr, cc = xc + dc; if (rr >= 0 && rr < SEA && cc >= 0 && cc < SEA && taken.has(rr * SEA + cc)) return true; } return false; };
+      if (cells.some(near)) continue;
+      cells.forEach((x) => taken.add(x)); ships.push(cells); break;
+    }
+  }
+  return ships;
+}
+const DUEL_WORDS = ['PIZZA', 'PUPPY', 'ROCKET', 'BANANA', 'CASTLE', 'DRAGON', 'JUNGLE', 'PENCIL', 'SUMMER', 'WINTER', 'PIRATE', 'GALAXY', 'MONKEY', 'CAMERA', 'COOKIE', 'TURTLE',
+  'RAINBOW', 'POPCORN', 'BICYCLE', 'PANCAKE', 'DOLPHIN', 'VOLCANO', 'UNICORN', 'BACKPACK', 'HOMEWORK', 'SLEEPOVER', 'TRAMPOLINE', 'SKATEBOARD', 'BASKETBALL', 'SANDWICH',
+  'PENGUIN', 'GIRAFFE', 'KANGAROO', 'OCTOPUS', 'HAMSTER', 'LIBRARY', 'TEACHER', 'BIRTHDAY', 'CUPCAKE', 'MARSHMALLOW', 'LEMONADE', 'SPAGHETTI', 'NOODLES', 'PUMPKIN', 'SNOWMAN',
+  'BLIZZARD', 'THUNDER', 'TORNADO', 'MOUNTAIN', 'ISLAND', 'TREASURE', 'WIZARD', 'ROBOT', 'MONSTER', 'DINOSAUR', 'SPACESHIP', 'ASTRONAUT', 'PLANET', 'COMET', 'PICNIC', 'CAMPFIRE',
+  'FLASHLIGHT', 'HEADPHONES', 'KEYBOARD', 'GUITAR', 'TRUMPET', 'DRUMMER', 'SOCCER', 'HOCKEY', 'TENNIS', 'BOWLING', 'SWIMMING', 'SKATING', 'ZEBRA', 'CHEETAH', 'PEACOCK', 'SQUIRREL',
+  'BUTTERFLY', 'LADYBUG', 'FIREFLY', 'SUNFLOWER', 'WATERMELON', 'PINEAPPLE', 'BLUEBERRY', 'CHOCOLATE', 'WAFFLES', 'PRETZEL', 'TACOS', 'BURRITO', 'MILKSHAKE', 'POPSICLE'];
+const DUEL_LIVES = 6;
+const shuffle = (a) => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const sideOf = (m, uid) => (m.p1 === uid ? 'a' : m.p2 === uid ? 'b' : null);
+const otherSide = (s) => (s === 'a' ? 'b' : 'a');
+function duelStatus(st, side) {
+  const word = st.words[side]; if (!word) return { solved: false, misses: 0, done: false };
+  const g = st.guesses[side], misses = g.filter((l) => !word.includes(l)).length, solved = [...word].every((l) => g.includes(l));
+  return { solved, misses, done: solved || misses >= DUEL_LIVES };
+}
+function matchView(m, uid) {
+  const st = JSON.parse(m.state || '{}'), me = sideOf(m, uid), them = otherSide(me), over = m.status === 'done';
+  const base = { id: m.id, game: m.game, status: m.status, my_turn: m.waiting_on.includes(`,${uid},`), winner: m.winner, you_won: m.winner === uid, tie: over && !m.winner && !st.resigned,
+    i_invited: m.p1 === uid, updated_at: m.updated_at };
+  if (m.status !== 'active' && m.status !== 'done') return base;
+  if (m.game === 'seabattle') {
+    const myShips = st.ships[me], theirShips = st.ships[them], myShots = st.shots[me], theirShots = st.shots[them];
+    const hitSet = (ships) => new Set(ships.flat());
+    const theirCells = hitSet(theirShips), myCells = hitSet(myShips);
+    const sunk = (ships, shots) => ships.filter((sh) => sh.every((c) => shots.includes(c)));
+    return { ...base, size: SEA, fleet: FLEET,
+      me: { ships: myShips, incoming: theirShots.map((c) => ({ c, hit: myCells.has(c) })), left: myShips.flat().filter((c) => !theirShots.includes(c)).length, can_shuffle: !st.shots[me].length && !st.shots[them].length },
+      them: { shots: myShots.map((c) => ({ c, hit: theirCells.has(c) })), sunk: over ? theirShips : sunk(theirShips, myShots), left: theirShips.flat().filter((c) => !myShots.includes(c)).length,
+        ships_left: theirShips.length - sunk(theirShips, myShots).length },
+      last: st.last || null };
+  }
+  const mine = duelStatus(st, me), theirs = duelStatus(st, them), word = st.words[me] || '';
+  return { ...base, lives: DUEL_LIVES,
+    pick: st.picked[me] ? null : st.options[me], // words I can choose for my friend
+    picked: st.picked[me] || null,
+    me: { ready: !!word, pattern: [...word].map((l) => (st.guesses[me].includes(l) || mine.done ? l : '_')).join(''), guesses: st.guesses[me], misses: mine.misses, solved: mine.solved, done: mine.done },
+    them: { ready: !!st.words[them], length: (st.words[them] || '').length, misses: theirs.misses, solved: theirs.solved, done: theirs.done,
+      found: [...(st.words[them] || '')].map((l) => (st.guesses[them].includes(l) || over ? (over ? l : '•') : '_')).join('') },
+  };
+}
+async function loadMatch(env, id, uid) {
+  const m = await first(env, 'SELECT * FROM matches WHERE id = ?', toInt(id));
+  if (!m || !sideOf(m, uid)) fail(404, 'Game not found');
+  return m;
+}
+async function saveMatch(env, m, st) {
+  m.state = JSON.stringify(st); m.updated_at = nowIso();
+  await run(env, 'UPDATE matches SET status = ?, turn = ?, winner = ?, waiting_on = ?, state = ?, updated_at = ? WHERE id = ?', m.status, m.turn, m.winner, m.waiting_on, m.state, m.updated_at, m.id);
+}
+const GAME_NAME = { seabattle: 'Sea Battle 🚢', wordduel: 'Word Duel 🔤' };
+add('GET', '/api/matches', async ({ env, user }) => {
+  const rows = await all(env, `SELECT m.*, u.display_name AS opp_name, u.avatar AS opp_avatar FROM matches m JOIN users u ON u.id = CASE WHEN m.p1 = ?1 THEN m.p2 ELSE m.p1 END
+    WHERE (m.p1 = ?1 OR m.p2 = ?1) AND (m.status IN ('invited','active') OR m.updated_at > ?2) ORDER BY m.updated_at DESC LIMIT 40`, user.id, ago(14 * 864e5));
+  return json({ matches: rows.map((m) => ({ ...matchView(m, user.id), opponent: { id: m.p1 === user.id ? m.p2 : m.p1, name: m.opp_name, avatar: m.opp_avatar } })) });
+}, { role: 'kid' });
+add('GET', '/api/matches/:id', async ({ env, user, params }) => {
+  const m = await loadMatch(env, params.id, user.id);
+  const opp = await first(env, 'SELECT id, display_name, avatar FROM users WHERE id = ?', m.p1 === user.id ? m.p2 : m.p1);
+  return json({ match: { ...matchView(m, user.id), opponent: { id: opp.id, name: opp.display_name, avatar: opp.avatar } } });
+}, { role: 'kid' });
+add('POST', '/api/matches', async ({ env, ctx, user, body }) => {
+  if (!GAME_NAME[body.game]) fail(400, 'Pick a game');
+  const fid = toInt(body.friend_id); if (!fid || fid === user.id) fail(400, 'Pick a friend');
+  const [a, b] = pair(user.id, fid);
+  if (!(await first(env, `SELECT id FROM friendships WHERE kid_a = ? AND kid_b = ? AND status = 'active'`, a, b)) || await isBlocked(env, user.id, fid)) fail(403, 'You can only play with approved friends');
+  await rateLimit(env, 'match:' + user.id, 30, 3600e3, 'Too many new games — finish some first!');
+  const open = await first(env, `SELECT id FROM matches WHERE game = ?1 AND status IN ('invited','active') AND ((p1 = ?2 AND p2 = ?3) OR (p1 = ?3 AND p2 = ?2))`, body.game, user.id, fid);
+  if (open) fail(409, 'You already have this game going with them!');
+  const st = body.game === 'seabattle' ? { ships: { a: placeFleet(), b: placeFleet() }, shots: { a: [], b: [] } }
+    : { options: { a: shuffle(DUEL_WORDS).slice(0, 3), b: shuffle(DUEL_WORDS).slice(0, 3) }, picked: {}, words: {}, guesses: { a: [], b: [] } };
+  const row = await first(env, `INSERT INTO matches (game, p1, p2, status, waiting_on, state) VALUES (?, ?, ?, 'invited', ?, ?) RETURNING id`, body.game, user.id, fid, `,${fid},`, JSON.stringify(st));
+  await notify(env, ctx, await usersById(env, [fid]), { type: 'game', title: `🎮 ${user.display_name} challenged you to ${GAME_NAME[body.game]}`, body: 'Open Games to play', link: 'games' });
+  return json({ ok: true, id: row.id });
+}, { role: 'kid' });
+add('POST', '/api/matches/:id/respond', async ({ env, ctx, user, params, body }) => {
+  const m = await loadMatch(env, params.id, user.id);
+  if (m.status !== 'invited' || m.p2 !== user.id) fail(409, 'This challenge is no longer waiting');
+  const st = JSON.parse(m.state);
+  if (!bool(body.accept)) { m.status = 'declined'; m.waiting_on = ''; await saveMatch(env, m, st); return json({ ok: true }); }
+  m.status = 'active';
+  if (m.game === 'seabattle') { m.turn = m.p1; m.waiting_on = `,${m.p1},`; }
+  else { m.waiting_on = `,${m.p1},${m.p2},`; } // both pick a word for the other
+  await saveMatch(env, m, st);
+  await notify(env, ctx, await usersById(env, [m.p1]), { type: 'game', title: `🎮 ${user.display_name} accepted ${GAME_NAME[m.game]}!`, body: m.game === 'seabattle' ? 'You fire first 🚀' : 'Pick a secret word for them', link: 'games' });
+  return json({ ok: true });
+}, { role: 'kid' });
+add('POST', '/api/matches/:id/resign', async ({ env, ctx, user, params }) => {
+  const m = await loadMatch(env, params.id, user.id);
+  if (!['invited', 'active'].includes(m.status)) fail(409, 'This game is already over');
+  const st = JSON.parse(m.state); const opp = m.p1 === user.id ? m.p2 : m.p1;
+  if (m.status === 'invited') { m.status = 'declined'; m.waiting_on = ''; await saveMatch(env, m, st); return json({ ok: true }); }
+  m.status = 'done'; m.winner = opp; m.turn = null; m.waiting_on = ''; st.resigned = user.id;
+  await saveMatch(env, m, st);
+  await notify(env, ctx, await usersById(env, [opp]), { type: 'game', title: `🏆 ${user.display_name} gave up ${GAME_NAME[m.game]} — you win!`, link: 'games' });
+  return json({ ok: true });
+}, { role: 'kid' });
+add('POST', '/api/matches/:id/move', async ({ env, ctx, user, params, body }) => {
+  const m = await loadMatch(env, params.id, user.id);
+  if (m.status !== 'active') fail(409, 'This game is not active');
+  const st = JSON.parse(m.state), me = sideOf(m, user.id), them = otherSide(me), opp = m.p1 === user.id ? m.p2 : m.p1;
+  let ping = null;
+  if (m.game === 'seabattle') {
+    if (body.action === 'shuffle') {
+      if (st.shots.a.length || st.shots.b.length) fail(409, 'Ships are locked once the shooting starts');
+      st.ships[me] = placeFleet(); await saveMatch(env, m, st); return json({ ok: true });
+    }
+    if (m.turn !== user.id) fail(409, "It's not your turn");
+    const c = toInt(body.cell); if (c === null || c < 0 || c >= SEA * SEA) fail(400, 'Pick a square');
+    if (st.shots[me].includes(c)) fail(409, 'You already fired there');
+    st.shots[me].push(c);
+    const cells = new Set(st.ships[them].flat()), hit = cells.has(c);
+    const sunkShip = hit ? st.ships[them].find((sh) => sh.includes(c) && sh.every((x) => st.shots[me].includes(x))) : null;
+    st.last = { by: me, c, hit, sunk: sunkShip ? sunkShip.length : 0 };
+    if ([...cells].every((x) => st.shots[me].includes(x))) {
+      m.status = 'done'; m.winner = user.id; m.turn = null; m.waiting_on = '';
+      ping = { title: `🚢 ${user.display_name} sank your whole fleet!`, body: 'Ask for a rematch?' };
+    } else {
+      m.turn = opp; m.waiting_on = `,${opp},`;
+      ping = { title: `🚢 Your turn in Sea Battle`, body: `${user.display_name} ${sunkShip ? 'sank a ship 💥' : hit ? 'hit a ship 💥' : 'missed 💦'}`, dedupe: `match:${m.id}` };
+    }
+  } else {
+    if (body.action === 'pick') {
+      if (st.picked[me]) fail(409, 'You already picked a word');
+      const w = String(body.word || '').toUpperCase();
+      if (!st.options[me].includes(w)) fail(400, 'Pick one of the words shown');
+      st.picked[me] = w; st.words[them] = w;
+      ping = { title: `🔤 ${user.display_name} picked your secret word!`, body: 'Start guessing in Word Duel', dedupe: `match:${m.id}` };
+    } else if (body.action === 'guess') {
+      if (!st.words[me]) fail(409, 'Wait for your friend to pick your word');
+      const l = String(body.letter || '').toUpperCase(); if (!/^[A-Z]$/.test(l)) fail(400, 'Pick a letter');
+      if (duelStatus(st, me).done) fail(409, "You're done with your word");
+      if (st.guesses[me].includes(l)) fail(409, 'You already tried that letter');
+      st.guesses[me].push(l);
+    } else fail(400, 'Unknown move');
+    const A = duelStatus(st, 'a'), B = duelStatus(st, 'b');
+    const need = [];
+    if (!st.picked.a) need.push(m.p1); if (!st.picked.b) need.push(m.p2);
+    if (st.words.a && !A.done) need.push(m.p1); if (st.words.b && !B.done) need.push(m.p2);
+    m.waiting_on = need.length ? `,${[...new Set(need)].join(',')},` : '';
+    if (A.done && B.done) {
+      m.status = 'done'; m.waiting_on = '';
+      const score = (x) => (x.solved ? 100 - x.misses : -1);
+      m.winner = score(A) > score(B) ? m.p1 : score(B) > score(A) ? m.p2 : null;
+      ping = { title: m.winner === opp ? `🔤 ${user.display_name} finished — you won Word Duel! 🏆` : m.winner ? `🔤 Word Duel is over — ${user.display_name} won` : `🔤 Word Duel ended in a tie!`, body: 'See the words in Games' };
+    } else if (body.action === 'guess') ping = null;
+  }
+  await saveMatch(env, m, st);
+  if (ping) await notify(env, ctx, await usersById(env, [opp]), { type: 'game', link: 'games', ...ping });
+  return json({ ok: true, match: matchView(m, user.id) });
+}, { role: 'kid' });
+
+// ================================================================ Stock Market Challenge (play money, REAL stocks, live prices)
+// Quotes come from Finnhub (free key → secret FINNHUB_KEY). We refresh at most once a minute while the market is open,
+// keep a price history for charts, and only allow trades while the real U.S. market is open.
+const MKT_START_CASH = 10000;
+const STOCKS = [
+  ['AAPL', 'Apple', '🍎', 'Makes iPhones, iPads, Macs and AirPods.'], ['MSFT', 'Microsoft', '🪟', 'Owns Xbox, Minecraft and Windows.'],
+  ['GOOGL', 'Alphabet (Google)', '▶️', 'Owns Google search, YouTube and Android.'], ['AMZN', 'Amazon', '📦', 'Online shopping, Prime Video and cloud computers.'],
+  ['NFLX', 'Netflix', '🎬', 'Streams shows and movies.'], ['DIS', 'Disney', '🏰', 'Movies, theme parks, Marvel, Pixar and Star Wars.'],
+  ['RBLX', 'Roblox', '🧱', 'The Roblox game platform.'], ['NKE', 'Nike', '👟', 'Sneakers and sportswear.'], ['MCD', "McDonald's", '🍟', 'Fast-food restaurants all over the world.'],
+  ['KO', 'Coca-Cola', '🥤', 'Coke, Sprite, Powerade and more drinks.'], ['TSLA', 'Tesla', '🚗', 'Electric cars and batteries.'],
+  ['NVDA', 'Nvidia', '🖥️', 'Computer chips for gaming and AI.'], ['SONY', 'Sony', '🎮', 'PlayStation, headphones, movies and music.'],
+  ['EA', 'Electronic Arts', '⚽', 'Video games like EA Sports FC and Madden.'], ['MAT', 'Mattel', '🧸', 'Barbie, Hot Wheels and UNO.'],
+  ['HAS', 'Hasbro', '🎲', 'Monopoly, Nerf and Play-Doh.'], ['WMT', 'Walmart', '🛒', 'The biggest store chain in the U.S.'], ['TGT', 'Target', '🎯', 'Stores for clothes, toys, food and more.'],
+  ['SBUX', 'Starbucks', '☕', 'Coffee shops (and lots of frappuccinos).'], ['CMG', 'Chipotle', '🌯', 'Burrito and bowl restaurants.'],
+  ['HSY', 'Hershey', '🍫', "Hershey's, Reese's and Kit Kat (in the U.S.)."], ['SPOT', 'Spotify', '🎧', 'Music and podcast streaming.'],
+  ['SPY', 'S&P 500 Index Fund', '🧺', 'Owns a little of the 500 biggest U.S. companies at once — that’s diversification!', true],
+];
+const SYMS = STOCKS.map((s) => s[0]);
+const nowTs = () => Date.now();
+function marketHoursGuess(t = new Date()) {
+  // Regular U.S. hours: Mon–Fri 9:30 AM–4:00 PM Eastern (holidays come from the market-status check when available).
+  const et = new Date(t.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const d = et.getDay(), m = et.getHours() * 60 + et.getMinutes();
+  return d >= 1 && d <= 5 && m >= 570 && m < 960;
+}
+async function metaGet(env, key) { return (await first(env, 'SELECT value FROM market_meta WHERE key = ?', key))?.value; }
+async function metaSet(env, key, value) { await run(env, 'INSERT INTO market_meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value', key, value); }
+async function marketStatus(env) {
+  const cached = await metaGet(env, 'status');
+  if (cached) { const c = JSON.parse(cached); if (nowTs() - c.at < 5 * 60e3) return c; }
+  if (env.MARKET_MOCK) return { open: env.MARKET_MOCK !== 'closed', holiday: null, at: nowTs() }; // local testing only
+  let st = { open: marketHoursGuess(), holiday: null, at: nowTs() };
+  if (env.FINNHUB_KEY) {
+    try {
+      const r = await fetch(`https://finnhub.io/api/v1/stock/market-status?exchange=US&token=${encodeURIComponent(env.FINNHUB_KEY)}`);
+      if (r.ok) { const j = await r.json(); if (typeof j.isOpen === 'boolean') st = { open: j.isOpen, holiday: j.holiday || null, session: j.session || null, at: nowTs() }; }
+    } catch (e) { console.error('market-status', e); }
+  }
+  await metaSet(env, 'status', JSON.stringify(st));
+  return st;
+}
+async function refreshQuotes(env, status) {
+  if (!env.FINNHUB_KEY && !env.MARKET_MOCK) return false;
+  const last = Number(await metaGet(env, 'fetched') || 0);
+  const maxAge = status.open ? 60e3 : 30 * 60e3;
+  if (nowTs() - last < maxAge) return false;
+  await metaSet(env, 'fetched', String(nowTs())); // claim the refresh so parallel requests don't all fetch
+  const at = new Date().toISOString(), bucket = new Date(Math.floor(nowTs() / (15 * 60e3)) * 15 * 60e3).toISOString();
+  const res = await Promise.all(SYMS.map(async (sym, i) => {
+    if (env.MARKET_MOCK) { const base = 50 + i * 17, c = Math.round(base * (1 + (Math.random() - 0.5) * 0.04) * 100) / 100; return { sym, q: { c, pc: base, o: base * 1.002, h: Math.max(c, base) * 1.01, l: Math.min(c, base) * 0.99, t: Math.floor(nowTs() / 1000) } }; }
+    try {
+      const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${encodeURIComponent(env.FINNHUB_KEY)}`);
+      if (!r.ok) return null;
+      const q = await r.json();
+      return q && q.c > 0 ? { sym, q } : null;
+    } catch { return null; }
+  }));
+  const stmts = [];
+  for (const x of res) {
+    if (!x) continue;
+    const { sym, q } = x;
+    stmts.push(env.DB.prepare(`INSERT INTO market_quotes (sym, price, prev_close, open, high, low, quote_time, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (sym) DO UPDATE SET price = excluded.price, prev_close = excluded.prev_close, open = excluded.open, high = excluded.high, low = excluded.low, quote_time = excluded.quote_time, fetched_at = excluded.fetched_at`)
+      .bind(sym, q.c, q.pc || null, q.o || null, q.h || null, q.l || null, q.t || null, at));
+    if (status.open) stmts.push(env.DB.prepare('INSERT OR IGNORE INTO market_history (sym, at, price) VALUES (?, ?, ?)').bind(sym, bucket, q.c));
+  }
+  if (stmts.length) await env.DB.batch(stmts);
+  return stmts.length > 0;
+}
+async function quotes(env) {
+  const rows = await all(env, 'SELECT * FROM market_quotes');
+  return Object.fromEntries(rows.map((r) => [r.sym, r]));
+}
+async function marketAccount(env, kidId, Q) {
+  let a = await first(env, 'SELECT * FROM market_accounts WHERE kid_id = ?', kidId);
+  if (!a) { await run(env, 'INSERT OR IGNORE INTO market_accounts (kid_id, cash) VALUES (?, ?)', kidId, MKT_START_CASH); a = await first(env, 'SELECT * FROM market_accounts WHERE kid_id = ?', kidId); }
+  const holdings = await all(env, 'SELECT symbol, shares, cost FROM market_holdings WHERE kid_id = ? AND shares > 0', kidId);
+  const hs = holdings.map((h) => { const price = Q[h.symbol]?.price ?? h.cost / h.shares; return { ...h, price, value: Math.round(price * h.shares * 100) / 100 }; });
+  const invested = hs.reduce((s, h) => s + h.value, 0);
+  return { cash: Math.round(a.cash * 100) / 100, holdings: hs, invested: Math.round(invested * 100) / 100, total: Math.round((a.cash + invested) * 100) / 100, start: MKT_START_CASH, started_at: a.started_at, resets: a.resets };
+}
+async function marketSetup(env) {
+  const status = await marketStatus(env);
+  await refreshQuotes(env, status);
+  return { status, Q: await quotes(env) };
+}
+add('GET', '/api/market', async ({ env, user }) => {
+  const { status, Q } = await marketSetup(env);
+  const stocks = STOCKS.map(([sym, name, em, about, index]) => ({ sym, name, em, about, index: !!index, price: Q[sym]?.price ?? null, prev: Q[sym]?.prev_close ?? null,
+    open: Q[sym]?.open ?? null, high: Q[sym]?.high ?? null, low: Q[sym]?.low ?? null, quote_time: Q[sym]?.quote_time ?? null }));
+  const me = await marketAccount(env, user.id, Q);
+  const group = await gameGroup(env, user.id), ph = group.map(() => '?').join(',');
+  const accts = await all(env, `SELECT a.kid_id, a.cash, u.display_name, u.avatar FROM market_accounts a JOIN users u ON u.id = a.kid_id WHERE a.kid_id IN (${ph})`, ...group);
+  const hold = await all(env, `SELECT kid_id, symbol, shares, cost FROM market_holdings WHERE shares > 0 AND kid_id IN (${ph})`, ...group);
+  const board = accts.map((a) => {
+    const v = a.cash + hold.filter((h) => h.kid_id === a.kid_id).reduce((s, h) => s + (Q[h.symbol]?.price ?? h.cost / h.shares) * h.shares, 0);
+    return { kid_id: a.kid_id, name: a.display_name, avatar: a.avatar, total: Math.round(v * 100) / 100, me: a.kid_id === user.id };
+  }).sort((a, b) => b.total - a.total).map((r, i) => ({ ...r, rank: i + 1 }));
+  return json({ connected: (!!env.FINNHUB_KEY || !!env.MARKET_MOCK) && Object.keys(Q).length > 0, status: { open: status.open, holiday: status.holiday }, stocks, me, board });
+}, { role: 'kid' });
+add('GET', '/api/market/:sym', async ({ env, user, params }) => {
+  const sym = String(params.sym).toUpperCase(); if (!SYMS.includes(sym)) fail(404, 'No such stock');
+  const { Q } = await marketSetup(env);
+  const hist = await all(env, 'SELECT at, price FROM market_history WHERE sym = ? AND at > ? ORDER BY at', sym, new Date(nowTs() - 30 * 864e5).toISOString());
+  const trades = await all(env, 'SELECT side, shares, price, at FROM market_trades WHERE kid_id = ? AND symbol = ? ORDER BY id DESC LIMIT 10', user.id, sym);
+  return json({ sym, quote: Q[sym] || null, history: hist, trades });
+}, { role: 'kid' });
+add('POST', '/api/market/trade', async ({ env, user, body }) => {
+  const sym = String(body.symbol || '').toUpperCase(); if (!SYMS.includes(sym)) fail(400, 'Pick a stock');
+  const n = toInt(body.shares); if (!n || n < 1 || n > 100000) fail(400, 'Enter how many shares (a whole number)');
+  if (!['buy', 'sell'].includes(body.side)) fail(400, 'Buy or sell?');
+  const { status, Q } = await marketSetup(env);
+  if (!status.open) fail(409, 'The stock market is closed right now. Real U.S. markets are open Monday–Friday, 8:30 AM–3:00 PM Central (closed on market holidays). Come back then to trade!');
+  const q = Q[sym]; if (!q) fail(503, 'No price yet for that stock — try again in a minute');
+  if (nowTs() - new Date(q.fetched_at).getTime() > 5 * 60e3) fail(503, 'Prices are updating — try again in a minute');
+  await rateLimit(env, 'trade:' + user.id, 120, 3600e3, 'Whoa, lots of trades! Take a breather and try again later.');
+  await marketAccount(env, user.id, Q);
+  const price = q.price, amount = Math.round(price * n * 100) / 100;
+  if (body.side === 'buy') {
+    const r = await env.DB.prepare('UPDATE market_accounts SET cash = cash - ? WHERE kid_id = ? AND cash >= ?').bind(amount, user.id, amount).run();
+    if (!r.meta.changes) fail(400, `Not enough cash — that costs $${amount.toFixed(2)}`);
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO market_holdings (kid_id, symbol, shares, cost) VALUES (?, ?, ?, ?) ON CONFLICT (kid_id, symbol) DO UPDATE SET shares = shares + excluded.shares, cost = cost + excluded.cost`).bind(user.id, sym, n, amount),
+      env.DB.prepare('INSERT INTO market_trades (kid_id, symbol, side, shares, price) VALUES (?, ?, ?, ?, ?)').bind(user.id, sym, 'buy', n, price),
+    ]);
+  } else {
+    const h = await first(env, 'SELECT shares, cost FROM market_holdings WHERE kid_id = ? AND symbol = ?', user.id, sym);
+    if (!h || h.shares < n) fail(400, `You only have ${h?.shares || 0} shares`);
+    const r = await env.DB.prepare('UPDATE market_holdings SET shares = shares - ?, cost = cost - ? WHERE kid_id = ? AND symbol = ? AND shares >= ?').bind(n, (h.cost / h.shares) * n, user.id, sym, n).run();
+    if (!r.meta.changes) fail(409, 'Try again');
+    await env.DB.batch([
+      env.DB.prepare('UPDATE market_accounts SET cash = cash + ? WHERE kid_id = ?').bind(amount, user.id),
+      env.DB.prepare('INSERT INTO market_trades (kid_id, symbol, side, shares, price) VALUES (?, ?, ?, ?, ?)').bind(user.id, sym, 'sell', n, price),
+      env.DB.prepare('DELETE FROM market_holdings WHERE kid_id = ? AND symbol = ? AND shares <= 0').bind(user.id, sym),
+    ]);
+  }
+  return json({ ok: true, price, amount, me: await marketAccount(env, user.id, Q) });
+}, { role: 'kid' });
+add('POST', '/api/market/reset', async ({ env, user }) => {
+  const acct = await first(env, 'SELECT started_at FROM market_accounts WHERE kid_id = ?', user.id);
+  if (acct && nowTs() - new Date(acct.started_at).getTime() < 7 * 864e5) fail(429, 'You can start over once a week — keep investing!');
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM market_holdings WHERE kid_id = ?').bind(user.id),
+    env.DB.prepare(`INSERT INTO market_accounts (kid_id, cash) VALUES (?, ?) ON CONFLICT (kid_id) DO UPDATE SET cash = excluded.cash, started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), resets = resets + 1`).bind(user.id, MKT_START_CASH),
+  ]);
+  return json({ ok: true, me: await marketAccount(env, user.id, await quotes(env)) });
+}, { role: 'kid' });
+// Keep history clean: drop chart points older than 60 days.
+async function pruneMarket(env) { await run(env, 'DELETE FROM market_history WHERE at < ?', new Date(nowTs() - 60 * 864e5).toISOString()); }
 
 add('POST', '/api/friends/request', async ({ env, ctx, user, body }) => {
   await rateLimit(env, 'friendcode:' + user.id, 10, 3600e3, 'Too many tries. Wait a bit before adding more friends.');

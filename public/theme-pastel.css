@@ -263,3 +263,38 @@ html[data-theme="pastel"] .quiz-opt.right { background: var(--p-mint); } html[da
 html[data-theme="pastel"] .scr-slots span { background: #fff; border-color: var(--p-lav-d); color: var(--p-ink); font-family: var(--serif); }
 html[data-theme="pastel"] .scr-slots.solved span { border-color: var(--p-mint-d); } html[data-theme="pastel"] .scr-slots.wrong span { border-color: var(--p-pink-d); }
 html[data-theme="pastel"] .scr-tile { background: var(--p-lav); color: var(--p-ink); border-color: #fff; box-shadow: var(--p-shadow); font-family: var(--serif); }
+
+/* game hub, leaderboards, friend games, extra games */
+html[data-theme="pastel"] { --snake-bg: #f6f0ff; --snake-body: #7d9a6c; --snake-head: #8f6bff; }
+html[data-theme="pastel"] .game-tile { background: #fff; color: var(--p-ink); border: 1.5px solid #fff; box-shadow: var(--p-shadow); }
+html[data-theme="pastel"] .game-tile.c-arcade { background: linear-gradient(160deg, #fff, var(--p-pink)); } html[data-theme="pastel"] .game-tile.c-puzzle { background: linear-gradient(160deg, #fff, var(--p-blue)); }
+html[data-theme="pastel"] .game-tile.c-quiz { background: linear-gradient(160deg, #fff, #fff0b3); } html[data-theme="pastel"] .game-tile.c-fun { background: linear-gradient(160deg, #fff, var(--p-mint)); }
+html[data-theme="pastel"] .lb-row.me { background: var(--p-lav); } html[data-theme="pastel"] .lb-score { color: var(--p-lav-d); font-family: var(--serif); font-style: italic; }
+html[data-theme="pastel"] .sea .sq { background: #d6e8ff; } html[data-theme="pastel"] .sea button.sq:not(:disabled) { background: #b9d6ff; }
+html[data-theme="pastel"] .sea .sq.miss { background: #f1eefa; } html[data-theme="pastel"] .sea .sq.hit, html[data-theme="pastel"] .sea .sq.sunk, html[data-theme="pastel"] .sea.mine .sq.ship.hit { background: var(--p-pink-d); }
+html[data-theme="pastel"] .sea.mine .sq.ship { background: #cfc7e6; }
+html[data-theme="pastel"] .key, html[data-theme="pastel"] .scell, html[data-theme="pastel"] .peg, html[data-theme="pastel"] .cb-row, html[data-theme="pastel"] .mcell.open, html[data-theme="pastel"] .t2048 { background: #fff; color: var(--p-ink); border-color: var(--p-lav); }
+html[data-theme="pastel"] .key, html[data-theme="pastel"] .scell, html[data-theme="pastel"] .math-q, html[data-theme="pastel"] .stroop-word, html[data-theme="pastel"] .stile, html[data-theme="pastel"] .bpm-num { font-family: var(--serif); }
+html[data-theme="pastel"] .key.hit { background: var(--p-mint); } html[data-theme="pastel"] .scell.given { background: var(--p-lav); color: var(--p-ink); } html[data-theme="pastel"] .scell { color: var(--p-lav-d); }
+html[data-theme="pastel"] .g2048 { background: var(--p-lav); } html[data-theme="pastel"] .mcell { background: var(--p-lav); color: var(--p-ink); }
+html[data-theme="pastel"] .light { background: #ece6fb; border-color: #fff; } html[data-theme="pastel"] .light.on { background: #ffe38a; box-shadow: 0 0 12px #ffe38a; }
+html[data-theme="pastel"] .stile { background: var(--p-lav); color: var(--p-ink); border-color: #fff; box-shadow: var(--p-shadow); }
+html[data-theme="pastel"] .c4 { background: #9fc6ff; } html[data-theme="pastel"] .c4cell { background: #fff; } html[data-theme="pastel"] .c4cell.p1 { background: var(--p-pink-d); } html[data-theme="pastel"] .c4cell.p2 { background: #ffd666; }
+html[data-theme="pastel"] .sky { background: linear-gradient(#d6e8ff, #ffe1ef); } html[data-theme="pastel"] .sky-msg b { color: var(--p-lav-d); }
+html[data-theme="pastel"] .type-target .ok { color: var(--p-mint-d); } html[data-theme="pastel"] .type-target .cur { border-color: var(--p-lav-d); }
+html[data-theme="pastel"] .snake-cv, html[data-theme="pastel"] .doodle-cv { border-color: #fff; box-shadow: var(--p-shadow); }
+html[data-theme="pastel"] .hole { border-color: #d9c8ff; }
+html[data-theme="pastel"] .game-tile.c-brain { background: linear-gradient(160deg, #fff, #ffd8c4); }
+
+/* Future Me */
+html[data-theme="pastel"] .fm-hero { background: linear-gradient(135deg, var(--p-lav), var(--p-blue)); }
+html[data-theme="pastel"] .progress, html[data-theme="pastel"] .bar, html[data-theme="pastel"] .grow-chart, html[data-theme="pastel"] .career, html[data-theme="pastel"] .grow-sum > div, html[data-theme="pastel"] .quote-grid > div, html[data-theme="pastel"] .mk-chart { background: #f1ecfb; color: var(--p-ink); }
+html[data-theme="pastel"] .progress i { background: linear-gradient(90deg, var(--p-mint-d), var(--p-lav-d)); }
+html[data-theme="pastel"] .inv-q, html[data-theme="pastel"] .grow-sum b, html[data-theme="pastel"] .mk-total, html[data-theme="pastel"] .mk-est { font-family: var(--serif); font-style: italic; }
+html[data-theme="pastel"] .jar { border-color: var(--p-lav-d); } html[data-theme="pastel"] .jar-fill { background: linear-gradient(#fff0b3, #ffd8a8); }
+html[data-theme="pastel"] .g-int, html[data-theme="pastel"] .split-bar .int, html[data-theme="pastel"] .key-dot.int { background: var(--p-mint-d); }
+html[data-theme="pastel"] .g-put, html[data-theme="pastel"] .split-bar .put, html[data-theme="pastel"] .key-dot.put { background: var(--p-lav-d); }
+html[data-theme="pastel"] .badge-chip { border-color: var(--p-lav); } html[data-theme="pastel"] .badge-chip.on { background: #fff0b3; border-color: #e0b400; }
+html[data-theme="pastel"] .tool-field input[type=range] { accent-color: var(--p-lav-d); }
+html[data-theme="pastel"] .up, html[data-theme="pastel"] .ok-text { color: #2f8a4f; } html[data-theme="pastel"] .down, html[data-theme="pastel"] .warn-text { color: #c0305a; }
+html[data-theme="pastel"] .mk-chart.up polyline { stroke: #2f8a4f; } html[data-theme="pastel"] .mk-chart.down polyline { stroke: #c0305a; }

@@ -209,7 +209,7 @@
     // Important alerts play more than once so they're hard to miss.
     const REPEAT = { pickup: 3, ready: 2, safety: 3, approve: 2, checkin: 1, message: 2, chime: 1 };
     const KIND = { message: 'message', parent_message: 'message', ready: 'ready', pickup: 'pickup', checkin: 'checkin', ride: 'pickup', ride_update: 'approve', parent_chat: 'message',
-      friend_request: 'approve', friend_approval: 'approve', friend_accepted: 'approve', plan_approval: 'approve', plan_update: 'approve', safety: 'safety' };
+      friend_request: 'approve', friend_approval: 'approve', friend_accepted: 'approve', plan_approval: 'approve', plan_update: 'approve', safety: 'safety', game: 'approve' };
     const api = {
       on, running, kindFor: (type) => KIND[type] || 'chime',
       play(kind, force) {
@@ -240,7 +240,7 @@
   }
   // Big drop-down card for new alerts — impossible to miss, even with the ringer off.
   const POP_EM = { message: '💬', parent_chat: '💬', parent_message: '💌', ready: '🙋', pickup: '🚗', ride: '🌧️', ride_update: '🚗', checkin: '📍', safety: '🛡️',
-    friend_request: '🫶', friend_accepted: '🤝', friend_approval: '✅', plan_approval: '📅', plan_update: '📅' };
+    friend_request: '🫶', friend_accepted: '🤝', friend_approval: '✅', plan_approval: '📅', plan_update: '📅', game: '🎮' };
   let popTimer = null;
   function alertPop(type, title, body, link) {
     if (!title) return;
@@ -271,7 +271,7 @@
   const parents = () => S.family.filter((u) => u.role === 'parent');
 
   // ================================================================ navigation
-  function go(tab) { S.tab = tab; S.view = null; S.game = null; render(); scrollTo(0, 0); loadForScreen(); return true; }
+  function go(tab) { if (S.tab === 'games') stopXGame(); S.tab = tab; S.view = null; S.game = null; render(); scrollTo(0, 0); loadForScreen(); return true; }
   function open(name, id) { S.view = { name, id }; render(); scrollTo(0, 0); loadForScreen(); return true; }
   function back() { S.view = null; render(); loadForScreen(); }
   function follow(link) {
@@ -282,6 +282,7 @@
     if (k === 'pchat') return isKid() ? false : open('pconv', Number(id));
     if (k === 'kid') return isKid() ? false : (S.tab = 'home', open('kid', Number(id)));
     if (k === 'friends') return go(isKid() ? 'friends' : 'approvals');
+    if (k === 'games') return isKid() ? go('games') : false;
     if (k === 'rides') return open('rides');
     if (k === 'plans') return isKid() ? (S.tab = 'home', open('plans')) : go('calendar');
     if (k === 'approvals') return go('approvals');
@@ -305,6 +306,8 @@
         if (S.tab === 'home') [S.plans, S.hang, S.today, S.rides, S.host] = await Promise.all([api('/plans').then((d) => d.plans), api('/hangout'), api('/today'), api('/rides').then((d) => d.rides), api('/host')]);
         if (S.tab === 'chat') S.chats = (await api('/chats')).chats;
         if (S.tab === 'friends') S.friends = await api('/friends');
+        if (S.tab === 'games' && !S.game) S.matches = (await api('/matches')).matches;
+        if (S.tab === 'games' && S.game === 'match' && S.matchId) S.match = (await api(`/matches/${S.matchId}`)).match;
       } else {
         if (S.tab === 'home') [S.dash, S.hang, S.today, S.rides, S.host] = await Promise.all([api('/dashboard'), api('/hangout'), api('/today'), api('/rides').then((d) => d.rides), api('/host')]);
         if (S.tab === 'approvals' || S.tab === 'calendar') [S.dash, S.school] = await Promise.all([api('/dashboard'), S.school || api('/school-calendar').then((d) => d.days)]);
@@ -354,8 +357,10 @@
   function paint() {
     const v = $('#view');
     if (!v) return;
+    if (S.view?.name === 'learn' && v.childElementCount) { learnPaint(); paintBadges(); return; }
     v.innerHTML = screenHTML();
     paintBadges();
+    if (S.tab === 'games') afterPaint();
   }
   function paintBadges() {
     const nav = $('#nav'); if (nav) nav.outerHTML = renderNav();
@@ -371,7 +376,7 @@
   function renderNav() {
     const b = S.badges;
     const tabs = isKid()
-      ? [['home', 'Home', I.home, b.family_messages], ['chat', 'Chat', I.chat, b.messages], ['friends', 'Friends', I.friends, 0], ['games', 'Games', I.games, 0], ['profile', 'Profile', I.profile, 0]]
+      ? [['home', 'Home', I.home, b.family_messages], ['chat', 'Chat', I.chat, b.messages], ['friends', 'Friends', I.friends, 0], ['games', 'Games', I.games, b.games], ['profile', 'Profile', I.profile, 0]]
       : [['home', 'Home', I.home, b.family_messages], ['approvals', 'Approvals', I.approve, b.approvals], ['calendar', 'Calendar', I.cal, 0], ['alerts', 'Alerts', I.bell, b.notifications], ['account', 'Account', I.gear, 0]];
     const cur = S.view?.name === 'conv' && isKid() ? 'chat' : S.tab;
     return `<nav class="bottom-nav" id="nav" aria-label="Main">${tabs.map(([k, l, ic, n]) => `
@@ -391,6 +396,7 @@
     if (v === 'kid') return viewParentKid();
     if (v === 'walk') return viewWalk();
     if (v === 'rides') return viewRides();
+    if (v === 'learn') return viewLearn();
     if (isKid()) return ({ home: kidHome, chat: kidChats, friends: kidFriends, games: kidGames, profile: kidProfile })[S.tab]();
     return ({ home: parentHome, approvals: parentApprovals, calendar: parentCalendar, alerts: viewNotifications, account: parentAccount })[S.tab]();
   }
@@ -620,6 +626,7 @@
         ${card('friends', 'tab', '🫶', 'Friends', 'data-tab="friends"')}
         ${card('games', 'tab', '🎮', 'Games', 'data-tab="games"')}
         ${card('plan', 'open', '📅', 'Made a Plan', 'data-view="plans"')}
+        ${card('games', 'learn-open', '🚀', 'Future Me', '')}
         ${card('profile', 'tab', '😎', 'Profile', 'data-tab="profile"')}
         ${card('settings', 'open', '⚙️', 'Settings', 'data-view="settings"')}
       </div>
@@ -835,21 +842,13 @@
     if (S.game === 'trivia') return gameTrivia();
     if (S.game === 'emoji') return gameEmoji();
     if (S.game === 'scramble') return gameScramble();
-    return `${sectionTitle('Games')}
-      <div class="dashboard-grid">
-        ${card('games', 'game', '🧠', 'Memory Match', 'data-g="memory"')}
-        ${card('chat', 'game', '❌', 'Tic-Tac-Toe', 'data-g="ttt"')}
-        ${card('profile', 'game', '🤔', 'Would You Rather', 'data-g="wyr"')}
-        ${card('plan', 'game', '💡', 'Hang Ideas', 'data-g="ideas"')}
-        ${card('games', 'game', '🚦', 'Simon Says', 'data-g="simon"')}
-        ${card('chat', 'game', '⚡', 'Reaction Time', 'data-g="react"')}
-        ${card('profile', 'game', '❓', 'Trivia', 'data-g="trivia"')}
-        ${card('plan', 'game', '🎬', 'Emoji Movie Guess', 'data-g="emoji"')}
-        ${card('games', 'game', '🔤', 'Word Scramble', 'data-g="scramble"')}
-      </div>
-      <p class="note">Games are just for you — no chatting with strangers here. 🎮</p>`;
+    if (S.game === 'leaders') return gameLeaders();
+    if (S.game === 'match') return gameMatch();
+    const g = XG()[S.game];
+    if (g) return gameShell(`${g.emoji} ${esc(g.title)}`, g.render(xctx(g)));
+    return gamesHome();
   }
-  const gameShell = (title, inner) => `<div class="subhead"><button class="icon-button" data-act="game" data-g="" aria-label="Back to games">${I.back}</button><h2>${title}</h2></div>${inner}`;
+  const gameShell = (title, inner) => `<div class="subhead"><button class="icon-button" data-act="game" data-g="" aria-label="Back to games">${I.back}</button><h2>${title}</h2>${S.game !== 'leaders' && gameMeta(S.game).dir ? `<button class="icon-button" data-act="lb-open" data-t="${S.game}" aria-label="Leaderboard">🏆</button>` : ''}</div>${inner}`;
   function newMemory() { S.mem = { deck: [...MEMO, ...MEMO].map((e, i) => ({ e, id: i })).sort(() => Math.random() - .5), open: [], done: new Set(), moves: 0, best: store.get('lh_mem_best', null), lock: false }; }
   function gameMemory() {
     if (!S.mem) newMemory();
@@ -1030,6 +1029,185 @@
       <div class="scr-tiles">${s.tiles.map((t, i) => `<button class="scr-tile" data-act="scr" data-i="${i}" ${s.used.includes(i) || s.solved ? 'disabled' : ''}>${t.l}</button>`).join('')}</div>
       ${s.solved ? `<p class="center big-win" aria-live="polite">${s.word}! 🎉</p><button class="primary-button block" data-act="scr-next">Next word →</button>`
         : `<div class="row"><button class="ghost-button grow" data-act="scr-back">⌫ Undo</button><button class="ghost-button grow" data-act="scr-hint">💡 Hint</button><button class="ghost-button grow" data-act="scr-skip">Skip</button></div>`}</div>`);
+  }
+
+  // ================================================================ GAME HUB: categories, leaderboards, extra games (games.js), friend games
+  const OLD_GAMES = [
+    { id: 'memory', title: 'Memory Match', emoji: '🧠', cat: 'puzzle', dir: 'low', unit: 'moves' }, { id: 'ttt', title: 'Tic-Tac-Toe', emoji: '❌', cat: 'puzzle', dir: 'high', unit: 'wins' },
+    { id: 'wyr', title: 'Would You Rather', emoji: '🤔', cat: 'fun' }, { id: 'ideas', title: 'Hang Ideas', emoji: '💡', cat: 'fun' },
+    { id: 'simon', title: 'Simon Says', emoji: '🚦', cat: 'arcade', dir: 'high', unit: 'rounds' }, { id: 'react', title: 'Reaction Time', emoji: '⚡', cat: 'arcade', dir: 'low', unit: 'ms' },
+    { id: 'trivia', title: 'Trivia', emoji: '❓', cat: 'quiz', dir: 'high', unit: '/ 10' }, { id: 'emoji', title: 'Emoji Movie Guess', emoji: '🎬', cat: 'quiz', dir: 'high', unit: '/ 10' },
+    { id: 'scramble', title: 'Word Scramble', emoji: '🔤', cat: 'puzzle', dir: 'high', unit: 'in a row' },
+  ];
+  const XG = () => Object.fromEntries((window.LH_GAMES || []).map((g) => [g.id, g]));
+  const allGames = () => [...OLD_GAMES, ...(window.LH_GAMES || [])];
+  const gameMeta = (id) => allGames().find((g) => g.id === id) || { id, title: id, emoji: '🎮' };
+  const CATS = [['all', 'All'], ['brain', '🧠 Mind Benders'], ['arcade', '🕹️ Arcade'], ['puzzle', '🧩 Puzzles'], ['quiz', '❓ Quiz'], ['fun', '🎉 Fun']];
+  const shuffleArr = (a) => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  // Personal bests: saved on this phone + sent to the friends leaderboard (the server keeps the best one).
+  function postScore(id, v) {
+    const m = gameMeta(id); if (!m.dir || v == null || !Number.isFinite(v)) return;
+    const key = 'lh_best_' + id, old = store.get(key, null);
+    if (old == null || (m.dir === 'high' ? v > old : v < old)) store.set(key, v);
+    api('/games/score', { method: 'POST', body: { game: id, score: v } }).catch(() => {});
+    S.lb = null;
+  }
+  const xActive = (id) => S.tab === 'games' && S.game === id && !S.view;
+  function xctx(g) {
+    S.gx = S.gx || {}; const s = S.gx[g.id] = S.gx[g.id] || {};
+    return { s, paint, esc, pick, store, confetti, toast, beep, shuffle: shuffleArr, active: () => xActive(g.id),
+      best: (v) => postScore(g.id, v), bestVal: () => store.get('lh_best_' + g.id, null) };
+  }
+  function stopXGame() { const g = XG()[S.game]; if (g?.stop) g.stop(xctx(g)); clearInterval(S.matchTimer); S.matchTimer = null; }
+  window.LH_GAME_SWIPE = (dir) => { const g = XG()[S.game]; if (!g?.swipe || !xActive(g.id)) return false; g.swipe(dir, xctx(g)); return true; };
+  function afterPaint() {
+    const g = XG()[S.game];
+    if (g?.mount && xActive(g.id)) g.mount($('#view'), xctx(g));
+  }
+  const fmtScore = (id, v) => { const m = gameMeta(id); const n = Number.isInteger(v) ? v : Math.round(v * 10) / 10; return m.unit === '/ 10' ? `${n} / 10` : `${n} ${m.unit || ''}`.trim(); };
+
+  function gamesHome() {
+    const cat = S.gcat || 'all', ms = S.matches || [];
+    const turn = ms.filter((m) => m.my_turn).length;
+    const tiles = allGames().filter((g) => cat === 'all' || g.cat === cat);
+    const mRow = (m) => {
+      const name = esc(first(m.opponent.name)), gm = m.game === 'seabattle' ? '🚢 Sea Battle' : '🔤 Word Duel';
+      const st = m.status === 'invited' ? (m.i_invited ? `Waiting for ${name} to accept` : `<b>${name} challenged you!</b>`)
+        : m.status === 'declined' ? 'Declined' : m.status === 'done' ? (m.you_won ? '🏆 You won!' : m.tie ? '🤝 Tie game' : `${name} won`)
+          : m.my_turn ? '<b>Your turn!</b>' : `Waiting for ${name}…`;
+      return `<button class="row-btn ${m.my_turn ? 'unread-row' : ''}" data-act="match-open" data-id="${m.id}">${ava(m.opponent.avatar)}
+        <span class="grow"><b>${gm} vs ${name}</b><span class="sub">${st}</span></span>${m.my_turn ? '<span class="unread">!</span>' : ''}</button>`;
+    };
+    return `${sectionTitle('Games')}
+      <button class="motivation-banner tone-yellow lb-banner" data-act="game" data-g="leaders"><p class="motivation-copy">🏆 Leaderboards<span class="mb-sub">See who's on top — you vs. your friends</span></p><span class="mb-emoji" aria-hidden="true">🥇</span></button>
+      <div class="panel stack versus">
+        <div class="row spread"><h3>⚔️ Play a friend ${turn ? `<span class="unread">${turn}</span>` : ''}</h3></div>
+        <div class="row">${['seabattle', 'wordduel'].map((g) => `<button class="action-card ${g === 'seabattle' ? 'friends' : 'chat'} grow vs-card" data-act="challenge" data-g="${g}"><span class="action-icon" aria-hidden="true">${g === 'seabattle' ? '🚢' : '🔤'}</span><span class="action-label">${g === 'seabattle' ? 'Sea Battle' : 'Word Duel'}<span class="action-arrow" aria-hidden="true">+</span></span></button>`).join('')}</div>
+        ${ms.length ? `<div class="panel list inner">${ms.slice(0, 12).map(mRow).join('')}</div>` : '<p class="small muted">Challenge an approved friend — you take turns, and we tell you when it’s your move.</p>'}
+      </div>
+      ${cat === 'brain' ? '<div class="panel tone-pink brain-note"><p><b>🧠 Mind Benders</b> — high-school-level brain busters for kids who love a real challenge. Think you can top the leaderboard?</p></div>' : ''}
+      <div class="chips cat-chips" role="group" aria-label="Game type">${CATS.map(([k, l]) => `<button class="chip" data-act="gcat" data-c="${k}" aria-pressed="${cat === k}">${l}</button>`).join('')}</div>
+      <div class="game-tiles">${tiles.map((g) => { const b = store.get('lh_best_' + g.id, null); return `<button class="game-tile c-${g.cat}" data-act="game" data-g="${g.id}"><span class="gt-em" aria-hidden="true">${g.emoji}</span><span class="gt-name">${esc(g.title)}</span>${b != null ? `<span class="gt-best">🏅 ${esc(fmtScore(g.id, b))}</span>` : ''}</button>`; }).join('')}</div>
+      <p class="note">Solo games are just for you. Friend games and leaderboards only include your approved friends. 🎮</p>`;
+  }
+  function gameLeaders() {
+    const d = S.lb, tab = S.lbTab || 'all';
+    if (!d) return gameShell('Leaderboards', '<div class="panel empty"><div class="e">⏳</div><p>Loading scores…</p></div>');
+    const scored = allGames().filter((g) => d.games[g.id]);
+    const medal = (r) => (r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : `<b class="rk">${r}</b>`);
+    let body;
+    if (tab === 'all') {
+      body = d.overall.length ? `<div class="panel list">${d.overall.map((o) => `<div class="row-btn static lb-row ${o.me ? 'me' : ''}"><span class="lb-rank">${medal(o.rank)}</span>${ava(o.avatar)}
+          <span class="grow"><b>${esc(o.name)}${o.me ? ' (you)' : ''}</b><span class="sub">🥇 ${o.gold} · 🥈 ${o.silver} · 🥉 ${o.bronze} · ${o.played} games</span></span><span class="lb-score">${o.points}<small>pts</small></span></div>`).join('')}</div>
+        <p class="note">Every game counts: 🥇 1st = 3 pts, 🥈 2nd = 2 pts, 🥉 3rd = 1 pt.</p>` : '';
+    } else {
+      const m = gameMeta(tab), rows = d.games[tab] || [];
+      body = `<p class="small muted center">${m.emoji} ${esc(m.title)} · ${m.dir === 'low' ? 'lowest wins' : 'highest wins'}</p>` + (rows.length ? `<div class="panel list">${rows.map((r) => `<div class="row-btn static lb-row ${r.me ? 'me' : ''}"><span class="lb-rank">${medal(r.rank)}</span>${ava(r.avatar)}
+          <span class="grow"><b>${esc(r.name)}${r.me ? ' (you)' : ''}</b></span><span class="lb-score">${esc(fmtScore(tab, r.score))}</span></div>`).join('')}</div>` : empty('🎮', 'No scores yet — be the first!'));
+    }
+    return gameShell('Leaderboards', `
+      ${d.friends ? '' : `<div class="panel tone-yellow"><p class="small">Add friends to compete with them! Right now it's just you. 🫶</p></div>`}
+      <label class="fld"><span>Show</span><select class="field" data-act="lb-pick" aria-label="Pick a leaderboard"><option value="all" ${tab === 'all' ? 'selected' : ''}>🏆 All-in-one (every game)</option>
+        ${allGames().filter((g) => g.dir).map((g) => `<option value="${g.id}" ${tab === g.id ? 'selected' : ''}>${g.emoji} ${esc(g.title)}${d.games[g.id] ? '' : ' — no scores yet'}</option>`).join('')}</select></label>
+      ${tab === 'all' && !d.overall.some((o) => o.played) ? empty('🏆', 'Play any game to get on the board!') : body}
+      ${tab === 'all' && scored.length ? `<h3 class="sub-h">Game champions</h3><div class="panel list">${scored.map((g) => { const top = d.games[g.id][0]; return `<button class="row-btn" data-act="lb-tab" data-t="${g.id}"><span class="feed-icon" aria-hidden="true">${g.emoji}</span><span class="grow"><b>${esc(g.title)}</b><span class="sub">🥇 ${esc(top.name)}${top.me ? ' (you)' : ''} · ${esc(fmtScore(g.id, top.score))}</span></span><span class="chev" aria-hidden="true">›</span></button>`; }).join('')}</div>` : ''}`);
+  }
+
+  // ---- friend games (Sea Battle + Word Duel)
+  function gameMatch() {
+    const m = S.match;
+    if (!m) return gameShell('Loading…', '<div class="panel empty"><div class="e">⏳</div></div>');
+    const opp = esc(first(m.opponent.name)), title = m.game === 'seabattle' ? 'Sea Battle' : 'Word Duel';
+    const head = `<div class="row vs-head">${ava(S.me.avatar)}<b>You</b><span class="or">vs</span><b>${opp}</b>${ava(m.opponent.avatar)}</div>`;
+    if (m.status === 'invited') return gameShell(title, `<div class="panel stack center">${head}
+      ${m.i_invited ? `<p>Waiting for ${opp} to accept… ⏳</p>${`<button class="ghost-button block" data-act="match-resign">Cancel challenge</button>`}`
+        : `<p><b>${opp}</b> challenged you to ${title}!</p><div class="row"><button class="primary-button grow" data-act="match-respond" data-a="1">✅ Let's play</button><button class="ghost-button grow" data-act="match-respond" data-a="0">No thanks</button></div>`}</div>`);
+    if (m.status === 'declined') return gameShell(title, `<div class="panel stack center">${head}<p>This challenge was declined.</p></div>`);
+    const over = m.status === 'done';
+    const banner = over ? `<p class="center big-win">${m.you_won ? 'You won! 🏆' : m.tie ? "It's a tie! 🤝" : `${opp} won this one`}</p>
+      <button class="primary-button block" data-act="challenge-go" data-g="${m.game}" data-f="${m.opponent.id}">🔁 Rematch</button>` : '';
+    const resign = over ? '' : '<button class="linkish small danger-link" data-act="match-resign">Give up</button>';
+    if (m.game === 'seabattle') {
+      const N = m.size, shot = new Map(m.them.shots.map((x) => [x.c, x.hit])), sunk = new Set(m.them.sunk.flat());
+      const mine = new Set(m.me.ships.flat()), inc = new Map(m.me.incoming.map((x) => [x.c, x.hit]));
+      const canFire = m.my_turn && !over;
+      const last = m.last && m.last.by !== (m.i_invited ? 'a' : 'b') && !over ? `<p class="center small">${opp} fired: ${m.last.sunk ? `sank your ${m.last.sunk}-ship 💥` : m.last.hit ? 'hit! 💥' : 'missed 💦'}</p>` : '';
+      return gameShell(title, `${head}${banner}
+        <div class="panel stack">
+          <div class="row spread">${`<span class="pill ${canFire ? 'st-approved' : ''}">${over ? 'Game over' : canFire ? '🎯 Your turn — fire!' : `⏳ ${opp}'s turn`}</span>`}<span class="pill">Ships left: ${m.them.ships_left}</span></div>
+          <h3 class="sub-h">Enemy waters</h3>
+          <div class="sea" style="--n:${N}">${Array.from({ length: N * N }, (_, c) => { const h = shot.get(c); return `<button class="sq ${h === true ? 'hit' : h === false ? 'miss' : ''} ${sunk.has(c) ? 'sunk' : ''}" data-act="sea-fire" data-c="${c}" ${!canFire || h !== undefined ? 'disabled' : ''} aria-label="Square ${c + 1}">${sunk.has(c) ? '🔥' : h === true ? '💥' : h === false ? '💦' : ''}</button>`; }).join('')}</div>
+          ${last}
+          <h3 class="sub-h">Your fleet · ${m.me.left} hits to go</h3>
+          <div class="sea mine" style="--n:${N}">${Array.from({ length: N * N }, (_, c) => { const h = inc.get(c); return `<span class="sq ${mine.has(c) ? 'ship' : ''} ${h === true ? 'hit' : h === false ? 'miss' : ''}">${h === true ? '💥' : h === false ? '💦' : mine.has(c) ? '🚢' : ''}</span>`; }).join('')}</div>
+          ${m.me.can_shuffle ? '<button class="ghost-button block" data-act="sea-shuffle">🔀 Shuffle my ships</button>' : ''}${resign}</div>`);
+    }
+    // Word Duel
+    const me = m.me, th = m.them;
+    let mid;
+    if (m.pick) mid = `<div class="panel stack center"><h3>Pick a secret word for ${opp} 🤫</h3><p class="small muted">They’ll have to guess it letter by letter.</p>
+      ${m.pick.map((w) => `<button class="quiz-opt center-text" data-act="duel-pick" data-w="${w}">${w}</button>`).join('')}</div>`;
+    else if (!me.ready) mid = `<div class="panel center"><p>You picked <b>${esc(m.picked)}</b> for ${opp}. Now waiting for ${opp} to pick your word… ⏳</p></div>`;
+    else mid = `<div class="panel stack"><div class="row spread"><span class="pill">Your word</span><span class="pill ${me.done ? (me.solved ? 'st-approved' : 'st-declined') : ''}">${me.solved ? 'Solved! 🎉' : me.done ? 'Out of balloons' : `${m.lives - me.misses} balloons left`}</span></div>
+      <p class="center balloons">${'🎈'.repeat(Math.max(0, m.lives - me.misses))}${'💨'.repeat(Math.min(m.lives, me.misses))}</p>
+      <div class="scr-slots ${me.solved ? 'solved' : me.done ? 'wrong' : ''}">${[...me.pattern].map((l) => `<span>${l === '_' ? '' : l}</span>`).join('')}</div>
+      ${me.done ? '' : `<div class="kbd">${'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((l) => { const g = me.guesses.includes(l); return `<button class="key ${g ? (me.pattern.includes(l) ? 'hit' : 'miss') : ''}" data-act="duel-guess" data-l="${l}" ${g ? 'disabled' : ''}>${l}</button>`; }).join('')}</div>`}</div>`;
+    const them = `<div class="panel stack"><div class="row spread"><span class="pill">${opp}'s progress</span><span class="pill">${th.ready ? (th.done ? (th.solved ? 'Solved! 🎉' : 'Out of balloons') : `${th.misses} misses`) : 'Picking…'}</span></div>
+      ${th.ready ? `<div class="scr-slots small-slots">${[...th.found].map((l) => `<span>${l === '_' ? '' : l}</span>`).join('')}</div>` : ''}
+      ${m.picked ? `<p class="small muted center">You gave them: <b>${esc(m.picked)}</b></p>` : ''}</div>`;
+    return gameShell(title, `${head}${banner}${mid}${them}${resign}`);
+  }
+  async function loadMatch(id, quiet) {
+    try { S.match = (await api(`/matches/${id}`)).match; if (S.game === 'match' && S.matchId === id) paint(); }
+    catch (e) { if (!quiet) toast(e.message, 'warn'); }
+  }
+  async function matchMove(body) {
+    try { const r = await api(`/matches/${S.matchId}/move`, { method: 'POST', body }); S.match = { ...S.match, ...r.match }; paint(); return r.match; }
+    catch (e) { toast(e.message, 'warn'); await loadMatch(S.matchId, true); }
+  }
+
+
+  // ================================================================ FUTURE ME (careers, money, stock market) — content lives in learn.js
+  S.lmem = S.lmem || {};
+  const learnKey = () => 'lh_learn_' + (S.me?.id || 0);
+  function lctx() {
+    return { paint: learnPaint, esc, confetti, toast, ava, api, mem: S.lmem,
+      get: () => store.get(learnKey(), {}), save: (d) => store.set(learnKey(), d), go: learnGo };
+  }
+  function learnGo(page) {
+    S.view = { name: 'learn', page: page || 'home' }; paint(); scrollTo(0, 0);
+    window.LH_LEARN?.load(S.view.page, lctx());
+    clearInterval(S.learnTimer);
+    if (window.LH_LEARN?.live(S.view.page)) S.learnTimer = setInterval(() => {
+      if (S.view?.name !== 'learn' || !window.LH_LEARN.live(S.view.page)) { clearInterval(S.learnTimer); return; }
+      if (!document.hidden) window.LH_LEARN.load(S.view.page, lctx());
+    }, 30000);
+  }
+  // Update the screen without wiping out whatever the kid is typing or dragging.
+  function morph(a, b) {
+    if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName) { a.replaceWith(b); return; }
+    if (a.nodeType === 3 || a.nodeType === 8) { if (a.data !== b.data) a.data = b.data; return; }
+    if (a.nodeType !== 1) return;
+    const active = a === document.activeElement;
+    for (const { name, value } of [...b.attributes]) if (a.getAttribute(name) !== value && !(active && name === 'value')) a.setAttribute(name, value);
+    for (const { name } of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
+    if (a.matches('input, textarea, select')) { if (!active && a.type !== 'checkbox' && b.hasAttribute('value')) a.value = b.getAttribute('value'); return; }
+    const ac = [...a.childNodes], bc = [...b.childNodes];
+    if (ac.length !== bc.length && !a.contains(document.activeElement)) { a.replaceChildren(...bc); return; }
+    for (let i = 0; i < Math.min(ac.length, bc.length); i++) morph(ac[i], bc[i]);
+    for (let i = ac.length; i < bc.length; i++) a.appendChild(bc[i]);
+    for (let i = ac.length - 1; i >= bc.length; i--) ac[i].remove();
+  }
+  function learnPaint() {
+    const v = $('#view'); if (!v || S.view?.name !== 'learn') return;
+    const t = document.createElement('main'); t.innerHTML = screenHTML();
+    morph(v, Object.assign(t, { id: 'view', className: v.className }));
+  }
+  function viewLearn() {
+    const L = window.LH_LEARN, page = S.view.page || 'home';
+    if (!L) return empty('⏳', 'Loading…');
+    return `<div class="subhead"><button class="icon-button" data-act="learn-back" aria-label="Back">${I.back}</button><h2>${page === 'home' ? '🚀 ' : ''}${esc(L.title(page))}</h2></div>
+      ${L.render(page, lctx())}`;
   }
 
   // ================================================================ KID: profile + settings
@@ -1677,6 +1855,7 @@
 
     // games
     game: (el) => {
+      stopXGame();
       S.game = el.dataset.g || null;
       if (S.game === 'memory') newMemory();
       if (S.game === 'simon') newSimon();
@@ -1684,14 +1863,49 @@
       if (S.game === 'trivia') newTrivia();
       if (S.game === 'emoji') newEmoji();
       if (S.game === 'scramble') newScramble();
+      if (S.game === 'leaders') { S.lbTab = el.dataset.t || 'all'; api('/games/leaderboard').then((d) => { S.lb = d; if (S.game === 'leaders') paint(); }).catch((e) => toast(e.message, 'warn')); }
+      const g = XG()[S.game];
+      if (g) { S.gx = S.gx || {}; S.gx[g.id] = {}; g.init?.(xctx(g)); }
+      if (!S.game) loadForScreen();
       paint(); scrollTo(0, 0);
     },
+    'lb-open': (el) => A.game({ dataset: { g: 'leaders', t: el.dataset.t } }),
+    'lb-tab': (el) => { S.lbTab = el.dataset.t; paint(); scrollTo(0, 0); },
+    'learn-open': () => { closeSheet(); learnGo('home'); },
+    'learn-back': () => { const p = window.LH_LEARN?.parent(S.view?.page || 'home'); clearInterval(S.learnTimer); if (p) learnGo(p); else back(); },
+    lx: (el) => { if (S.view?.name === 'learn') window.LH_LEARN?.act(el.dataset.x, el, lctx()); },
+    gcat: (el) => { S.gcat = el.dataset.c; paint(); },
+    gx: (el) => { const g = XG()[S.game]; if (g && xActive(g.id)) g.act(el.dataset.x, el, xctx(g)); },
+    challenge: async (el) => {
+      if (!S.friends) S.friends = await api('/friends').catch(() => null);
+      const fr = S.friends?.friends || [], g = el.dataset.g, name = g === 'seabattle' ? '🚢 Sea Battle' : '🔤 Word Duel';
+      openSheet(`<div class="stack"><h2>${name}</h2>
+        <p class="small muted">${g === 'seabattle' ? 'Take turns firing at each other’s hidden ships. Sink the whole fleet to win!' : 'Pick a secret word for your friend, they pick one for you. Fewest misses wins!'}</p>
+        ${fr.length ? `<div class="panel list">${fr.map((it) => `<button class="row-btn" data-act="challenge-go" data-g="${g}" data-f="${it.kid.id}">${ava(it.kid.avatar)}<span class="grow"><b>${esc(it.kid.display_name)}</b></span><span class="chev" aria-hidden="true">⚔️</span></button>`).join('')}</div>`
+          : empty('🫶', 'Add a friend first — then you can challenge them!')}
+        <button type="button" class="ghost-button block" data-act="close-sheet">Cancel</button></div>`);
+    },
+    'challenge-go': async (el) => {
+      try { const r = await api('/matches', { method: 'POST', body: { game: el.dataset.g, friend_id: Number(el.dataset.f) } }); closeSheet(); toast('⚔️ Challenge sent!'); A['match-open']({ dataset: { id: r.id } }); }
+      catch (e) { toast(e.message, 'warn'); }
+    },
+    'match-open': (el) => {
+      stopXGame(); S.game = 'match'; S.matchId = Number(el.dataset.id); S.match = null;
+      loadMatch(S.matchId); paint(); scrollTo(0, 0);
+      S.matchTimer = setInterval(() => { if (document.hidden) return; if (S.tab !== 'games' || S.game !== 'match') { clearInterval(S.matchTimer); return; } if (S.match && !S.match.my_turn && S.match.status !== 'done') loadMatch(S.matchId, true); }, 3000);
+    },
+    'match-respond': async (el) => { try { await api(`/matches/${S.matchId}/respond`, { method: 'POST', body: { accept: el.dataset.a === '1' } }); await loadMatch(S.matchId); } catch (e) { toast(e.message, 'warn'); } },
+    'match-resign': async () => { if (!confirm(S.match?.status === 'invited' ? 'Cancel this challenge?' : 'Give up this game?')) return; try { await api(`/matches/${S.matchId}/resign`, { method: 'POST' }); await loadMatch(S.matchId); } catch (e) { toast(e.message, 'warn'); } },
+    'sea-fire': async (el) => { if (!S.match?.my_turn) return; el.disabled = true; const m = await matchMove({ action: 'fire', cell: Number(el.dataset.c) }); if (m) { const h = m.them.shots.find((x) => x.c === Number(el.dataset.c)); beep(h?.hit ? 300 : 900, h?.hit ? 300 : 120); if (m.status === 'done' && m.you_won) confetti(); } },
+    'sea-shuffle': () => matchMove({ action: 'shuffle' }).then(() => loadMatch(S.matchId, true)),
+    'duel-pick': (el) => matchMove({ action: 'pick', word: el.dataset.w }),
+    'duel-guess': async (el) => { el.disabled = true; const m = await matchMove({ action: 'guess', letter: el.dataset.l }); if (m?.me) { beep(m.me.pattern.includes(el.dataset.l) ? 760 : 200, 70); if (m.me.solved && m.me.done) confetti(); } },
     'simon-start': () => { newSimon(); S.simon.seq.push(pick(SIMON)[0]); simonPlay(); },
     simon: (el) => {
       const s = S.simon, c = el.dataset.c;
       if (s.playing || s.over) return;
       beep(SIMON_HZ[c], 220); s.lit = c; setTimeout(() => { if (S.simon === s && s.lit === c && !s.playing) { s.lit = null; paint(); } }, 220);
-      if (c !== s.seq[s.step]) { s.over = true; beep(110, 600); const r = s.seq.length - 1; if (r > s.best) { s.best = r; store.set('lh_simon_best', r); } paint(); return; }
+      if (c !== s.seq[s.step]) { s.over = true; beep(110, 600); const r = s.seq.length - 1; if (r > s.best) { s.best = r; store.set('lh_simon_best', r); } if (r > 0) postScore('simon', r); paint(); return; }
       s.step++;
       if (s.step === s.seq.length) { if (s.seq.length > s.best) { s.best = s.seq.length; store.set('lh_simon_best', s.best); } s.seq.push(pick(SIMON)[0]); setTimeout(() => { if (S.simon === s) simonPlay(); }, 500); }
       paint();
@@ -1701,7 +1915,7 @@
       if (r.state === 'wait') { clearTimeout(S.reactT); r.state = 'early'; }
       else if (r.state === 'go') {
         r.ms = Math.round(performance.now() - r.t0); r.state = 'done';
-        if (!r.best || r.ms < r.best) { r.best = r.ms; store.set('lh_react_best', r.ms); if (r.ms < 400) confetti(); }
+        if (!r.best || r.ms < r.best) { r.best = r.ms; store.set('lh_react_best', r.ms); if (r.ms < 400) confetti(); } if (r.ms >= 80) postScore('react', r.ms);
       } else {
         r.state = 'wait';
         S.reactT = setTimeout(() => { if (S.react === r && r.state === 'wait') { r.state = 'go'; r.t0 = performance.now(); paint(); } }, 1500 + Math.random() * 2500);
@@ -1709,17 +1923,17 @@
       paint();
     },
     triv: (el) => { const t = S.triv; if (t.picked != null) return; t.picked = el.dataset.o; if (t.picked === t.qs[t.i].right) t.score++; paint(); },
-    'triv-next': () => { const t = S.triv; t.i++; t.picked = null; if (t.i >= t.qs.length) { if (t.score > t.best) { t.best = t.score; store.set('lh_triv_best', t.score); } if (t.score >= 8) confetti(); } paint(); },
+    'triv-next': () => { const t = S.triv; t.i++; t.picked = null; if (t.i >= t.qs.length) { if (t.score > t.best) { t.best = t.score; store.set('lh_triv_best', t.score); } postScore('trivia', t.score); if (t.score >= 8) confetti(); } paint(); },
     'triv-reset': () => { newTrivia(); paint(); },
     emo: (el) => { const t = S.emo; if (t.picked != null) return; t.picked = el.dataset.o; if (t.picked === t.qs[t.i].right) t.score++; paint(); },
-    'emo-next': () => { const t = S.emo; t.i++; t.picked = null; if (t.i >= t.qs.length) { if (t.score > t.best) { t.best = t.score; store.set('lh_emo_best', t.score); } if (t.score >= 8) confetti(); } paint(); },
+    'emo-next': () => { const t = S.emo; t.i++; t.picked = null; if (t.i >= t.qs.length) { if (t.score > t.best) { t.best = t.score; store.set('lh_emo_best', t.score); } postScore('emoji', t.score); if (t.score >= 8) confetti(); } paint(); },
     'emo-reset': () => { newEmoji(); paint(); },
     scr: (el) => {
       const s = S.scr, i = Number(el.dataset.i);
       if (s.solved || s.used.includes(i) || s.used.length >= s.word.length) return;
       s.used.push(i);
       if (s.used.length === s.word.length && s.used.map((j) => s.tiles[j].l).join('') === s.word) {
-        s.solved = true; s.streak++; if (s.streak > s.best) { s.best = s.streak; store.set('lh_scr_best', s.streak); } confetti();
+        s.solved = true; s.streak++; if (s.streak > s.best) { s.best = s.streak; store.set('lh_scr_best', s.streak); } postScore('scramble', s.streak); confetti();
       }
       paint();
     },
@@ -1740,7 +1954,7 @@
       if (m.open.length === 2) {
         m.moves++;
         const [a, b] = m.open;
-        if (m.deck[a].e === m.deck[b].e) { m.done.add(a); m.done.add(b); m.open = []; if (m.done.size === m.deck.length) { if (!m.best || m.moves < m.best) { m.best = m.moves; store.set('lh_mem_best', m.moves); } confetti(); } }
+        if (m.deck[a].e === m.deck[b].e) { m.done.add(a); m.done.add(b); m.open = []; if (m.done.size === m.deck.length) { if (!m.best || m.moves < m.best) { m.best = m.moves; store.set('lh_mem_best', m.moves); } postScore('memory', m.moves); confetti(); } }
         else { m.lock = true; setTimeout(() => { m.open = []; m.lock = false; paint(); }, 750); }
       }
       paint();
@@ -1752,7 +1966,7 @@
       t.b[i] = 'X';
       if (!tttWinner(t.b)) t.b[tttCpu(t.b)] = 'O';
       const w = tttWinner(t.b);
-      if (w) { t.score[w === 'X' ? 'w' : w === 'O' ? 'l' : 'd']++; store.set('lh_ttt', t.score); if (w === 'X') confetti(); }
+      if (w) { t.score[w === 'X' ? 'w' : w === 'O' ? 'l' : 'd']++; store.set('lh_ttt', t.score); if (w === 'X') { confetti(); postScore('ttt', t.score.w); } }
       paint();
     },
     'ttt-reset': () => { S.ttt.b = Array(9).fill(null); paint(); },
@@ -1909,8 +2123,13 @@
     const fn = A[el.dataset.act];
     if (fn) { e.preventDefault(); fn(el, e); }
   });
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (el.dataset?.lin && S.view?.name === 'learn') window.LH_LEARN?.input(el, S.view.page, lctx());
+  });
   document.addEventListener('change', (e) => {
     const el = e.target;
+    if (el.dataset.act === 'lb-pick') { S.lbTab = el.value; paint(); return; }
     if (el.tagName === 'INPUT' && el.type === 'checkbox' && el.dataset.act && A[el.dataset.act]) A[el.dataset.act](el, e);
   });
   document.addEventListener('submit', async (e) => {
