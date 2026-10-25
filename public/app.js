@@ -125,25 +125,42 @@
   const Sound = (() => {
     let ctx = null;
     const on = () => store.get('lh_sound', true) !== false;
-    let bus = null;
-    function engine() {
-      if (!ctx) {
-        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; ctx = new AC();
-        // Loud: boost everything, then a limiter so it doesn't crackle on phone speakers.
-        const boost = ctx.createGain(); boost.gain.value = 2.6;
-        const lim = ctx.createDynamicsCompressor();
-        lim.threshold.value = -10; lim.knee.value = 4; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.15;
-        const out = ctx.createGain(); out.gain.value = 1.25;
-        boost.connect(lim).connect(out).connect(ctx.destination); bus = boost;
-      }
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    let bus = null, missed = null;
+    function build() {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
+      ctx = new AC();
+      // Loud: boost everything, then a limiter so it doesn't crackle on phone speakers.
+      const boost = ctx.createGain(); boost.gain.value = 2.6;
+      const lim = ctx.createDynamicsCompressor();
+      lim.threshold.value = -10; lim.knee.value = 4; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.15;
+      const out = ctx.createGain(); out.gain.value = 1.25;
+      boost.connect(lim).connect(out).connect(ctx.destination); bus = boost;
       return ctx;
     }
+    // iPhones pause web audio ("suspended" or "interrupted") after a lock, call, Siri, app switch or a quiet spell.
+    function engine() {
+      if (!ctx || ctx.state === 'closed') build();
+      if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
+      return ctx;
+    }
+    const running = () => !!ctx && ctx.state === 'running';
+    // Every tap: if the audio is stuck, throw it away and build a fresh one (iOS only allows this inside a tap).
     function unlock() {
+      if (ctx && ctx.state !== 'running') {
+        const old = ctx; ctx = null; bus = null;
+        try { old.close(); } catch { /* already gone */ }
+      }
       const c = engine(); if (!c) return;
-      const b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0);
+      const b = c.createBuffer(1, 1, 22050), src = c.createBufferSource(); src.buffer = b; src.connect(c.destination); src.start(0);
+      // An alert that arrived while the sound was stuck plays now (if it was in the last 2 minutes).
+      if (missed && Date.now() - missed.at < 120e3) { const k = missed.kind; missed = null; setTimeout(() => api.play(k, true), 60); }
+      $('#alert-pop .ap-mute')?.remove();
     }
     ['touchend', 'pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, unlock, { passive: true }));
+    // Coming back to the app: try to wake the audio (works on some phones; the next tap fixes the rest).
+    const wake = () => { if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {}); };
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
+    window.addEventListener('pageshow', wake); window.addEventListener('focus', wake);
     // note: [frequency Hz, start s, length s, voice, volume, slide-to Hz]
     // voices: any oscillator wave, plus 'pluck' (guitar-ish) and 'bell' (glassy, with an overtone)
     function osc(c, type, f, t, len, vol, toF) {
@@ -193,16 +210,22 @@
     const REPEAT = { pickup: 3, ready: 2, safety: 3, approve: 2, checkin: 1, message: 2, chime: 1 };
     const KIND = { message: 'message', parent_message: 'message', ready: 'ready', pickup: 'pickup', checkin: 'checkin', ride: 'pickup', ride_update: 'approve', parent_chat: 'message',
       friend_request: 'approve', friend_approval: 'approve', friend_accepted: 'approve', plan_approval: 'approve', plan_update: 'approve', safety: 'safety' };
-    return {
-      on, kindFor: (type) => KIND[type] || 'chime',
+    const api = {
+      on, running, kindFor: (type) => KIND[type] || 'chime',
       play(kind, force) {
         if (!force && !on()) return;
         const set = TUNES[theme()] || TUNES.neon;
+        engine();
+        if (!running()) { // stuck — remember it; if it wakes up by itself, forget it, otherwise it plays on the next tap
+          missed = { kind, at: Date.now() };
+          setTimeout(() => { if (running()) missed = null; }, 400);
+        }
         try { tune(set[kind] || set.chime, REPEAT[kind] || 1); } catch { /* audio blocked */ }
         try { navigator.vibrate?.(kind === 'message' ? 120 : [220, 120, 220, 120, 220]); } catch { /* not supported (iPhone) */ }
       },
       set(v) { store.set('lh_sound', !!v); },
     };
+    return api;
   })();
   // Compare fresh badge counts with what we've already heard; play one sound for anything new.
   let heard = null;
@@ -225,11 +248,12 @@
     if (!el) { el = document.createElement('button'); el.id = 'alert-pop'; el.type = 'button'; document.body.appendChild(el); }
     el.className = `alert-pop t-${type || 'chime'}`;
     el.dataset.link = link || '';
-    el.innerHTML = `<span class="ap-em" aria-hidden="true">${POP_EM[type] || '🔔'}</span><span class="ap-txt"><b>${esc(title)}</b>${body ? `<small>${esc(body)}</small>` : ''}</span><span class="ap-x" aria-hidden="true">✕</span>`;
+    el.innerHTML = `<span class="ap-em" aria-hidden="true">${POP_EM[type] || '🔔'}</span><span class="ap-txt"><b>${esc(title)}</b>${body ? `<small>${esc(body)}</small>` : ''}${Sound.on() && !Sound.running() ? '<small class="ap-mute">🔇 Tap to turn the sound back on</small>' : ''}</span><span class="ap-x" aria-hidden="true">✕</span>`;
     el.setAttribute('role', 'alert');
     void el.offsetWidth; el.classList.add('show');
     document.body.classList.remove('alert-flash'); void document.body.offsetWidth; document.body.classList.add('alert-flash');
     clearTimeout(popTimer); popTimer = setTimeout(() => el.classList.remove('show'), 9000);
+    setTimeout(() => { if (Sound.running()) el.querySelector('.ap-mute')?.remove(); }, 450);
     el.onclick = (e) => {
       el.classList.remove('show');
       if (e.target.closest('.ap-x')) return;
@@ -790,6 +814,13 @@
     ['Live at the beach 🏖️', 'Live in the mountains 🏔️'], ['Talk to animals 🐶', 'Speak every language 🌍'], ['Have no homework ever 📚', 'Have summer all year ☀️'],
     ['Be a famous singer 🎤', 'Be a pro athlete 🏀'], ['Time travel to the past ⏳', 'Time travel to the future 🚀'], ['Ice cream for breakfast 🍦', 'Pancakes for dinner 🥞'],
     ['Have a robot best friend 🤖', 'Have a secret treehouse 🌳'],
+    ['Never have to sleep 😴', 'Never have to eat 🍽️'], ['Have a pool in your room 🏊', 'Have a slide in your house 🛝'], ['Be the funniest person 😂', 'Be the smartest person 🧠'],
+    ['Live in a castle 🏰', 'Live on a boat ⛵'], ['Have super speed ⚡', 'Have super strength 💪'], ['Be a kid forever 🧒', 'Be a grown-up now 🧑'],
+    ['Go to space 🚀', 'Go to the bottom of the ocean 🌊'], ['Have a giant pet hamster 🐹', 'Have a tiny pet elephant 🐘'], ['Only wear pajamas 🛌', 'Only wear fancy clothes 🎩'],
+    ['Have a never-ending pizza 🍕', 'Have a never-ending ice cream 🍦'], ['Be able to breathe underwater 🐠', 'Be able to see in the dark 🦉'], ['Snow day every Friday ❄️', 'Field trip every Monday 🚌'],
+    ['Have 10 siblings 👨‍👩‍👧‍👦', 'Be an only child 🙋'], ['Teleport anywhere 🌀', 'Read minds 🔮'], ['Only whisper 🤫', 'Only shout 📢'],
+    ['Meet your favorite YouTuber 📹', 'Meet your favorite athlete 🏆'], ['Have a talking cat 🐱', 'Have a dog that does homework 🐕'], ['Live in a treehouse 🌳', 'Live in an igloo 🧊'],
+    ['Be a wizard 🧙', 'Be a superhero 🦸'], ['Eat a bug 🐛', 'Hold a snake 🐍'],
   ];
   const IDEAS = ['Bake cookies together 🍪', 'Make up a dance routine 💃', 'Build a blanket fort 🏰', 'Have a board game tournament 🎲', 'Bike to the park 🚲',
     'Paint rocks and hide them 🎨', 'Movie marathon + popcorn 🍿', 'Have a backyard picnic 🧺', 'Learn a new card game 🃏', 'Make friendship bracelets 💜', 'Shoot hoops 🏀', 'Have a karaoke night 🎤'];
@@ -799,12 +830,22 @@
     if (S.game === 'ttt') return gameTTT();
     if (S.game === 'wyr') return gameWYR();
     if (S.game === 'ideas') return gameIdeas();
+    if (S.game === 'simon') return gameSimon();
+    if (S.game === 'react') return gameReact();
+    if (S.game === 'trivia') return gameTrivia();
+    if (S.game === 'emoji') return gameEmoji();
+    if (S.game === 'scramble') return gameScramble();
     return `${sectionTitle('Games')}
       <div class="dashboard-grid">
         ${card('games', 'game', '🧠', 'Memory Match', 'data-g="memory"')}
         ${card('chat', 'game', '❌', 'Tic-Tac-Toe', 'data-g="ttt"')}
         ${card('profile', 'game', '🤔', 'Would You Rather', 'data-g="wyr"')}
         ${card('plan', 'game', '💡', 'Hang Ideas', 'data-g="ideas"')}
+        ${card('games', 'game', '🚦', 'Simon Says', 'data-g="simon"')}
+        ${card('chat', 'game', '⚡', 'Reaction Time', 'data-g="react"')}
+        ${card('profile', 'game', '❓', 'Trivia', 'data-g="trivia"')}
+        ${card('plan', 'game', '🎬', 'Emoji Movie Guess', 'data-g="emoji"')}
+        ${card('games', 'game', '🔤', 'Word Scramble', 'data-g="scramble"')}
       </div>
       <p class="note">Games are just for you — no chatting with strangers here. 🎮</p>`;
   }
@@ -857,6 +898,138 @@
       <p class="idea">${esc(S.idea)}</p>
       <button class="ghost-button block" data-act="idea-next">🎲 Another idea</button>
       <button class="warm-button block" data-act="plan-new" data-title="${esc(S.idea.replace(/\s\S+$/u, ''))}">📅 Make it a plan</button></div>`);
+  }
+
+  // ---- more games: Simon, Reaction, Trivia, Emoji Guess, Word Scramble
+  const SIMON = [['g', '🟢'], ['r', '🔴'], ['y', '🟡'], ['b', '🔵']];
+  const SIMON_HZ = { g: 392, r: 330, y: 262, b: 196 };
+  let beepCtx = null;
+  function beep(hz, ms = 260) {
+    if (!Sound.on()) return;
+    try {
+      beepCtx = beepCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (beepCtx.state !== 'running') beepCtx.resume();
+      const o = beepCtx.createOscillator(), g = beepCtx.createGain(), t = beepCtx.currentTime;
+      o.type = 'triangle'; o.frequency.value = hz; o.connect(g); g.connect(beepCtx.destination);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + ms / 1000);
+      o.start(t); o.stop(t + ms / 1000 + 0.05);
+    } catch { /* no audio */ }
+  }
+  function newSimon() { S.simon = { seq: [], step: 0, lit: null, playing: false, over: false, best: store.get('lh_simon_best', 0) }; }
+  function simonPlay() {
+    const s = S.simon; s.playing = true; s.step = 0; paint();
+    const speed = Math.max(260, 600 - s.seq.length * 25);
+    s.seq.forEach((c, i) => {
+      setTimeout(() => { if (S.simon !== s) return; s.lit = c; beep(SIMON_HZ[c], speed * 0.8); paint(); }, 500 + i * speed * 1.4);
+      setTimeout(() => { if (S.simon !== s) return; s.lit = null; if (i === s.seq.length - 1) s.playing = false; paint(); }, 500 + i * speed * 1.4 + speed);
+    });
+  }
+  function gameSimon() {
+    if (!S.simon) newSimon();
+    const s = S.simon, round = s.seq.length;
+    const msg = s.over ? `Oops! You got to round ${round}. 💥` : !round ? 'Watch the colors, then copy them!' : s.playing ? '👀 Watch…' : 'Your turn — copy it!';
+    return gameShell('Simon Says', `<div class="panel stack">
+      <div class="row spread"><span class="pill">Round ${round}</span>${s.best ? `<span class="pill st-approved">Best: ${s.best}</span>` : ''}</div>
+      <p class="center" aria-live="polite"><b>${msg}</b></p>
+      <div class="simon-grid">${SIMON.map(([c, e]) => `<button class="simon s-${c} ${s.lit === c ? 'lit' : ''}" data-act="simon" data-c="${c}" aria-label="${e}" ${s.playing || s.over || !round ? 'disabled' : ''}></button>`).join('')}</div>
+      ${!round || s.over ? `<button class="primary-button block" data-act="simon-start">${s.over ? 'Play again' : '▶ Start'}</button>` : ''}</div>`);
+  }
+
+  function gameReact() {
+    const r = S.react || (S.react = { state: 'idle', ms: null, best: store.get('lh_react_best', null) });
+    const face = { idle: ['react-idle', 'Tap to start', 'When the box turns green, tap as fast as you can!'],
+      wait: ['react-wait', 'Wait for green…', 'Don’t tap yet! 🤫'], go: ['react-go', 'TAP!', ''],
+      early: ['react-early', 'Too early! 😅', 'Tap to try again'], done: ['react-done', `${r.ms} ms`, `${r.ms < 250 ? 'Lightning fast! ⚡' : r.ms < 350 ? 'Quick! 🔥' : 'Nice! Try again?'} Tap to go again`] }[r.state];
+    return gameShell('Reaction Time', `<div class="panel stack">
+      <div class="row spread"><span class="pill">Fastest wins</span>${r.best ? `<span class="pill st-approved">Best: ${r.best} ms</span>` : ''}</div>
+      <button class="react-box ${face[0]}" data-act="react-tap"><b>${face[1]}</b><span>${face[2]}</span></button></div>`);
+  }
+
+  const TRIVIA = [
+    ['How many legs does a spider have?', ['8', '6', '10', '12']], ['What planet is known as the Red Planet?', ['Mars', 'Venus', 'Jupiter', 'Saturn']],
+    ['What is the largest ocean?', ['Pacific', 'Atlantic', 'Indian', 'Arctic']], ['How many sides does a hexagon have?', ['6', '5', '7', '8']],
+    ['What gas do plants take in from the air?', ['Carbon dioxide', 'Oxygen', 'Helium', 'Nitrogen']], ['Which animal is the fastest on land?', ['Cheetah', 'Lion', 'Horse', 'Greyhound']],
+    ['What is the capital of South Dakota?', ['Pierre', 'Sioux Falls', 'Rapid City', 'Aberdeen']], ['How many continents are there?', ['7', '5', '6', '8']],
+    ['What is frozen water called?', ['Ice', 'Steam', 'Fog', 'Dew']], ['Which is the biggest planet?', ['Jupiter', 'Saturn', 'Earth', 'Neptune']],
+    ['How many minutes are in an hour?', ['60', '100', '30', '90']], ['What do bees make?', ['Honey', 'Milk', 'Silk', 'Wax paper']],
+    ['Which bird is a symbol of the USA?', ['Bald eagle', 'Robin', 'Owl', 'Pigeon']], ['What color do you get mixing blue and yellow?', ['Green', 'Purple', 'Orange', 'Brown']],
+    ['How many players are on a basketball court per team?', ['5', '6', '9', '11']], ['What is 7 × 8?', ['56', '54', '64', '48']],
+    ['Which instrument has 88 keys?', ['Piano', 'Guitar', 'Violin', 'Drum']], ['What is the closest star to Earth?', ['The Sun', 'Polaris', 'Sirius', 'The Moon']],
+    ['What do caterpillars turn into?', ['Butterflies', 'Bees', 'Spiders', 'Beetles']], ['Which is a mammal?', ['Dolphin', 'Shark', 'Salmon', 'Octopus']],
+    ['How many days are in a leap year?', ['366', '365', '364', '360']], ['What shape has 3 sides?', ['Triangle', 'Square', 'Circle', 'Pentagon']],
+    ['Mount Rushmore is in which state?', ['South Dakota', 'Montana', 'Wyoming', 'Colorado']], ['What is the hardest natural material?', ['Diamond', 'Gold', 'Iron', 'Glass']],
+    ['Which planet has the most famous rings?', ['Saturn', 'Mars', 'Mercury', 'Earth']], ['What do you call a baby kangaroo?', ['Joey', 'Cub', 'Kit', 'Calf']],
+    ['How many strings does a regular guitar have?', ['6', '4', '5', '8']], ['What is the boiling point of water in °F?', ['212', '100', '180', '32']],
+    ['Which is the longest river in the USA?', ['Missouri', 'Hudson', 'Colorado', 'Ohio']], ['What does a thermometer measure?', ['Temperature', 'Weight', 'Speed', 'Time']],
+  ];
+  function newTrivia() {
+    const qs = [...TRIVIA].sort(() => Math.random() - .5).slice(0, 10).map(([q, a]) => ({ q, right: a[0], opts: [...a].sort(() => Math.random() - .5) }));
+    S.triv = { qs, i: 0, score: 0, picked: null, best: store.get('lh_triv_best', 0) };
+  }
+  function gameTrivia() {
+    if (!S.triv) newTrivia();
+    const t = S.triv;
+    if (t.i >= t.qs.length) return gameShell('Trivia', `<div class="panel stack center">
+      <p class="big-win">${t.score} / ${t.qs.length}</p><p>${t.score >= 9 ? 'Genius level! 🧠' : t.score >= 6 ? 'Great job! 🔥' : 'Nice try — go again! 💪'}</p>
+      ${t.best ? `<span class="pill st-approved">Best: ${t.best} / 10</span>` : ''}
+      <button class="primary-button block" data-act="triv-reset">Play again</button></div>`);
+    const q = t.qs[t.i];
+    return gameShell('Trivia', `<div class="panel stack">
+      <div class="row spread"><span class="pill">Question ${t.i + 1} of ${t.qs.length}</span><span class="pill st-approved">Score: ${t.score}</span></div>
+      <h3>${esc(q.q)}</h3>
+      <div class="quiz-opts">${q.opts.map((o) => { const st = t.picked == null ? '' : o === q.right ? 'right' : o === t.picked ? 'wrong' : ''; return `<button class="quiz-opt ${st}" data-act="triv" data-o="${esc(o)}" ${t.picked != null ? 'disabled' : ''}>${esc(o)}</button>`; }).join('')}</div>
+      ${t.picked != null ? `<p class="center" aria-live="polite"><b>${t.picked === q.right ? pick(['Correct! ✅', 'Yes! 🎯', 'Nailed it! 🙌']) : `Not quite — it's ${esc(q.right)}`}</b></p><button class="primary-button block" data-act="triv-next">${t.i + 1 < t.qs.length ? 'Next →' : 'See score'}</button>` : ''}</div>`);
+  }
+
+  const EMOJI_Q = [
+    ['🦁👑', 'The Lion King', ['Frozen', 'Madagascar', 'Zootopia']], ['❄️👸⛄', 'Frozen', ['Moana', 'Tangled', 'Encanto']], ['🐠🔍', 'Finding Nemo', ['Shark Tale', 'The Little Mermaid', 'Luca']],
+    ['🧸🤠🚀', 'Toy Story', ['Cars', 'Up', 'Shrek']], ['🎈🏠👴', 'Up', ['Coco', 'Toy Story', 'Inside Out']], ['🕷️🧑', 'Spider-Man', ['Batman', 'Ant-Man', 'Iron Man']],
+    ['🍫🏭🎩', 'Charlie and the Chocolate Factory', ['Matilda', 'Willy the Wizard', 'The Candy Shop']], ['🧙‍♂️⚡👓', 'Harry Potter', ['The Hobbit', 'Percy Jackson', 'Narnia']],
+    ['🦖🏝️', 'Jurassic Park', ['Ice Age', 'King Kong', 'Godzilla']], ['🐼🥋', 'Kung Fu Panda', ['Karate Kid', 'Mulan', 'Big Hero 6']], ['🚗⚡🏁', 'Cars', ['Speed Racer', 'Turbo', 'Planes']],
+    ['😀😢😡😨🤢', 'Inside Out', ['Emoji Movie', 'Soul', 'Wish']], ['💀🎸🌼', 'Coco', ['Encanto', 'Soul', 'Luca']], ['🧜‍♀️🐚', 'The Little Mermaid', ['Moana', 'Luca', 'Finding Dory']],
+    ['🌊🛶🐔', 'Moana', ['Brave', 'Frozen II', 'Raya']], ['👹💚🧅', 'Shrek', ['Monsters, Inc.', 'Trolls', 'Hotel Transylvania']], ['👁️🟢🚪', 'Monsters, Inc.', ['Shrek', 'Minions', 'Coraline']],
+    ['🍌💛👓', 'Minions', ['Despicable Me 4', 'Banana Split', 'Trolls']], ['🐀👨‍🍳🍲', 'Ratatouille', ['Chef', 'Cloudy with a Chance of Meatballs', 'Stuart Little']],
+    ['🏠🧑‍🤝‍🧑🦋✨', 'Encanto', ['Coco', 'Wish', 'Tangled']], ['🍕🐢🥷', 'Teenage Mutant Ninja Turtles', ['Kung Fu Panda', 'Turtle Power', 'Ninjago']],
+    ['🐝🎬', 'Bee Movie', ['A Bug’s Life', 'Antz', 'Honey Wars']], ['🌧️🍔🍝', 'Cloudy with a Chance of Meatballs', ['Ratatouille', 'Food Fight', 'Wreck-It Ralph']],
+    ['🦸‍♂️🛡️🇺🇸', 'Captain America', ['Superman', 'Thor', 'Black Panther']], ['🎮👊🍬', 'Wreck-It Ralph', ['Pac-Man', 'Pixels', 'Super Mario']],
+  ];
+  function newEmoji() {
+    const qs = [...EMOJI_Q].sort(() => Math.random() - .5).slice(0, 10).map(([e, right, wrong]) => ({ e, right, opts: [right, ...wrong].sort(() => Math.random() - .5) }));
+    S.emo = { qs, i: 0, score: 0, picked: null, best: store.get('lh_emo_best', 0) };
+  }
+  function gameEmoji() {
+    if (!S.emo) newEmoji();
+    const t = S.emo;
+    if (t.i >= t.qs.length) return gameShell('Emoji Movie Guess', `<div class="panel stack center">
+      <p class="big-win">${t.score} / ${t.qs.length}</p><p>${t.score >= 9 ? 'Movie master! 🎬' : t.score >= 6 ? 'So good! 🍿' : 'Go again! 🎥'}</p>
+      ${t.best ? `<span class="pill st-approved">Best: ${t.best} / 10</span>` : ''}
+      <button class="primary-button block" data-act="emo-reset">Play again</button></div>`);
+    const q = t.qs[t.i];
+    return gameShell('Emoji Movie Guess', `<div class="panel stack">
+      <div class="row spread"><span class="pill">${t.i + 1} of ${t.qs.length}</span><span class="pill st-approved">Score: ${t.score}</span></div>
+      <p class="center emoji-clue" aria-label="Emoji clue">${q.e}</p><p class="center small muted">What movie is this?</p>
+      <div class="quiz-opts">${q.opts.map((o) => { const st = t.picked == null ? '' : o === q.right ? 'right' : o === t.picked ? 'wrong' : ''; return `<button class="quiz-opt ${st}" data-act="emo" data-o="${esc(o)}" ${t.picked != null ? 'disabled' : ''}>${esc(o)}</button>`; }).join('')}</div>
+      ${t.picked != null ? `<p class="center" aria-live="polite"><b>${t.picked === q.right ? pick(['Yes! 🎬', 'You got it! 🍿', 'Correct! ⭐']) : `It was ${esc(q.right)}!`}</b></p><button class="primary-button block" data-act="emo-next">${t.i + 1 < t.qs.length ? 'Next →' : 'See score'}</button>` : ''}</div>`);
+  }
+
+  const WORDS = ['PIZZA', 'FRIEND', 'SCHOOL', 'PLANET', 'SOCCER', 'GUITAR', 'PUPPY', 'ROCKET', 'BANANA', 'CASTLE', 'DRAGON', 'JUNGLE', 'PENCIL', 'SUMMER', 'WINTER', 'TACOS', 'PIRATE', 'GALAXY',
+    'MONKEY', 'CAMERA', 'COOKIE', 'BASKET', 'TURTLE', 'RAINBOW', 'SLEEPOVER', 'POPCORN', 'BICYCLE', 'PANCAKE', 'DOLPHIN', 'VOLCANO', 'SKATEBOARD', 'UNICORN', 'TRAMPOLINE', 'BACKPACK', 'HOMEWORK'];
+  function newScramble(keepScore) {
+    const word = pick(WORDS); let mix;
+    do { mix = [...word].sort(() => Math.random() - .5); } while (mix.join('') === word);
+    const prev = S.scr || {};
+    S.scr = { word, tiles: mix.map((l, i) => ({ l, i })), used: [], hint: 0, solved: false, streak: keepScore ? prev.streak || 0 : 0, best: store.get('lh_scr_best', 0) };
+  }
+  function gameScramble() {
+    if (!S.scr) newScramble();
+    const s = S.scr, guess = s.used.map((i) => s.tiles[i].l).join('');
+    return gameShell('Word Scramble', `<div class="panel stack">
+      <div class="row spread"><span class="pill">Streak: ${s.streak}</span>${s.best ? `<span class="pill st-approved">Best: ${s.best}</span>` : ''}</div>
+      <p class="center small muted">Tap the letters to unscramble the word${s.hint ? ` · starts with <b>${s.word.slice(0, s.hint)}</b>` : ''}</p>
+      <div class="scr-slots ${s.solved ? 'solved' : guess.length === s.word.length ? 'wrong' : ''}">${[...s.word].map((_, i) => `<span>${guess[i] || ''}</span>`).join('')}</div>
+      <div class="scr-tiles">${s.tiles.map((t, i) => `<button class="scr-tile" data-act="scr" data-i="${i}" ${s.used.includes(i) || s.solved ? 'disabled' : ''}>${t.l}</button>`).join('')}</div>
+      ${s.solved ? `<p class="center big-win" aria-live="polite">${s.word}! 🎉</p><button class="primary-button block" data-act="scr-next">Next word →</button>`
+        : `<div class="row"><button class="ghost-button grow" data-act="scr-back">⌫ Undo</button><button class="ghost-button grow" data-act="scr-hint">💡 Hint</button><button class="ghost-button grow" data-act="scr-skip">Skip</button></div>`}</div>`);
   }
 
   // ================================================================ KID: profile + settings
@@ -1503,7 +1676,63 @@
     'school-all': () => { S.schoolAll = !S.schoolAll; paint(); },
 
     // games
-    game: (el) => { S.game = el.dataset.g || null; if (S.game === 'memory') newMemory(); paint(); scrollTo(0, 0); },
+    game: (el) => {
+      S.game = el.dataset.g || null;
+      if (S.game === 'memory') newMemory();
+      if (S.game === 'simon') newSimon();
+      if (S.game === 'react') { clearTimeout(S.reactT); S.react = null; }
+      if (S.game === 'trivia') newTrivia();
+      if (S.game === 'emoji') newEmoji();
+      if (S.game === 'scramble') newScramble();
+      paint(); scrollTo(0, 0);
+    },
+    'simon-start': () => { newSimon(); S.simon.seq.push(pick(SIMON)[0]); simonPlay(); },
+    simon: (el) => {
+      const s = S.simon, c = el.dataset.c;
+      if (s.playing || s.over) return;
+      beep(SIMON_HZ[c], 220); s.lit = c; setTimeout(() => { if (S.simon === s && s.lit === c && !s.playing) { s.lit = null; paint(); } }, 220);
+      if (c !== s.seq[s.step]) { s.over = true; beep(110, 600); const r = s.seq.length - 1; if (r > s.best) { s.best = r; store.set('lh_simon_best', r); } paint(); return; }
+      s.step++;
+      if (s.step === s.seq.length) { if (s.seq.length > s.best) { s.best = s.seq.length; store.set('lh_simon_best', s.best); } s.seq.push(pick(SIMON)[0]); setTimeout(() => { if (S.simon === s) simonPlay(); }, 500); }
+      paint();
+    },
+    'react-tap': () => {
+      const r = S.react;
+      if (r.state === 'wait') { clearTimeout(S.reactT); r.state = 'early'; }
+      else if (r.state === 'go') {
+        r.ms = Math.round(performance.now() - r.t0); r.state = 'done';
+        if (!r.best || r.ms < r.best) { r.best = r.ms; store.set('lh_react_best', r.ms); if (r.ms < 400) confetti(); }
+      } else {
+        r.state = 'wait';
+        S.reactT = setTimeout(() => { if (S.react === r && r.state === 'wait') { r.state = 'go'; r.t0 = performance.now(); paint(); } }, 1500 + Math.random() * 2500);
+      }
+      paint();
+    },
+    triv: (el) => { const t = S.triv; if (t.picked != null) return; t.picked = el.dataset.o; if (t.picked === t.qs[t.i].right) t.score++; paint(); },
+    'triv-next': () => { const t = S.triv; t.i++; t.picked = null; if (t.i >= t.qs.length) { if (t.score > t.best) { t.best = t.score; store.set('lh_triv_best', t.score); } if (t.score >= 8) confetti(); } paint(); },
+    'triv-reset': () => { newTrivia(); paint(); },
+    emo: (el) => { const t = S.emo; if (t.picked != null) return; t.picked = el.dataset.o; if (t.picked === t.qs[t.i].right) t.score++; paint(); },
+    'emo-next': () => { const t = S.emo; t.i++; t.picked = null; if (t.i >= t.qs.length) { if (t.score > t.best) { t.best = t.score; store.set('lh_emo_best', t.score); } if (t.score >= 8) confetti(); } paint(); },
+    'emo-reset': () => { newEmoji(); paint(); },
+    scr: (el) => {
+      const s = S.scr, i = Number(el.dataset.i);
+      if (s.solved || s.used.includes(i) || s.used.length >= s.word.length) return;
+      s.used.push(i);
+      if (s.used.length === s.word.length && s.used.map((j) => s.tiles[j].l).join('') === s.word) {
+        s.solved = true; s.streak++; if (s.streak > s.best) { s.best = s.streak; store.set('lh_scr_best', s.streak); } confetti();
+      }
+      paint();
+    },
+    'scr-back': () => { S.scr.used.pop(); paint(); },
+    'scr-hint': () => {
+      const s = S.scr; if (s.hint >= s.word.length - 1) return; s.hint++;
+      // lock in the first hinted letters
+      const want = [...s.word.slice(0, s.hint)], used = [];
+      want.forEach((l) => { const j = s.tiles.findIndex((t, k) => t.l === l && !used.includes(k)); used.push(j); });
+      s.used = used; paint();
+    },
+    'scr-skip': () => { toast(`It was ${S.scr.word}`); newScramble(false); paint(); },
+    'scr-next': () => { newScramble(true); paint(); },
     memo: (el) => {
       const m = S.mem, i = Number(el.dataset.i);
       if (m.lock || m.open.includes(i) || m.done.has(i)) return;
